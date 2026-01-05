@@ -18,6 +18,7 @@ export async function reportCommand(options) {
   const generator = new ReportGenerator();
 
   let spinner;
+  let usedCache = false;
 
   try {
     if (options.developer) {
@@ -48,10 +49,19 @@ export async function reportCommand(options) {
       const outputPath = await generator.generateDeveloperReport(
         options.developer,
         options,
-        (msg) => { spinner.text = msg; }
+        (msg) => {
+          spinner.text = msg;
+          if (msg.includes('缓存')) {
+            usedCache = true;
+          }
+        }
       );
 
-      spinner.succeed('报告生成完成');
+      if (usedCache) {
+        spinner.succeed('使用缓存报告 (数据无变化)');
+      } else {
+        spinner.succeed('报告生成完成');
+      }
       console.log();
       logger.success(`报告已保存到: ${outputPath}`);
 
@@ -102,10 +112,19 @@ export async function reportCommand(options) {
       const outputPath = await generator.generateProjectReport(
         projectName,
         options,
-        (msg) => { spinner.text = msg; }
+        (msg) => {
+          spinner.text = msg;
+          if (msg.includes('缓存')) {
+            usedCache = true;
+          }
+        }
       );
 
-      spinner.succeed('报告生成完成');
+      if (usedCache) {
+        spinner.succeed('使用缓存报告 (数据无变化)');
+      } else {
+        spinner.succeed('报告生成完成');
+      }
       console.log();
       logger.success(`报告已保存到: ${outputPath}`);
       console.log();
@@ -114,6 +133,9 @@ export async function reportCommand(options) {
       console.log(`  项目: ${projectName}`);
       console.log(`  Reviews: ${stats.total_reviews}`);
       console.log(`  问题: ${stats.total_errors || 0}E / ${stats.total_warnings || 0}W / ${stats.total_infos || 0}I`);
+      if (usedCache) {
+        console.log(`  状态: 使用缓存 (无新数据)`);
+      }
 
       if (options.open) {
         console.log();

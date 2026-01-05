@@ -141,7 +141,8 @@ export async function analyzeCommand(options) {
             } else if (progress.type === 'tool_result') {
               spinner.text = `AI 正在分析... (已获取 ${progress.tool} 结果)`;
             }
-          }
+          },
+          10 // 增加最大迭代次数到 10
         );
 
         await codeContext.close();

@@ -123,7 +123,12 @@ You have access to tools that can help you understand the codebase better:
 - When you need to understand the types or interfaces involved
 - When the change might affect other parts of the codebase
 
-**Important:** Only use tools when necessary. If the diff is self-contained and clear, proceed without tools.
+**Important tool usage rules:**
+- Only use tools when absolutely necessary for identifying bugs
+- Limit tool calls to a maximum of 3-4 calls total
+- If the diff is self-contained and clear, proceed WITHOUT using any tools
+- After gathering enough context, stop using tools and provide your final analysis
+- Do NOT exhaustively explore the codebase - focus only on what's directly relevant to the diff
 
 ## Review Guidelines
 

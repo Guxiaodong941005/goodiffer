@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import dayjs from 'dayjs';
 import { getDatabase, getConfigDir } from './database.js';
 import { AIClient } from './ai-client.js';
@@ -13,6 +14,39 @@ export class ReportGenerator {
     this.aiClient = new AIClient(this.config);
   }
 
+  // 计算数据哈希 (用于缓存校验)
+  calculateDataHash(data) {
+    const str = JSON.stringify(data);
+    return crypto.createHash('md5').update(str).digest('hex');
+  }
+
+  // 生成日期范围键 (用于缓存)
+  buildDateRangeKey(options) {
+    const since = options.since || 'default';
+    const until = options.until || 'default';
+    return `${since}:${until}`;
+  }
+
+  // 检查缓存是否有效
+  checkCache(reportType, targetId, dateRangeKey, currentLatestReviewId) {
+    const cache = this.db.getReportCache(reportType, targetId, dateRangeKey);
+    if (!cache) {
+      return { valid: false, reason: '无缓存记录' };
+    }
+
+    // 检查是否有新数据
+    if (cache.last_review_id < currentLatestReviewId) {
+      return { valid: false, reason: '有新的 Review 数据' };
+    }
+
+    // 检查缓存文件是否存在
+    if (!fs.existsSync(cache.report_path)) {
+      return { valid: false, reason: '缓存文件不存在' };
+    }
+
+    return { valid: true, cache };
+  }
+
   // 生成项目报告
   async generateProjectReport(projectName, options = {}, onProgress) {
     // 获取项目
@@ -23,6 +57,26 @@ export class ReportGenerator {
 
     // 构建日期范围
     const dateRange = this.buildDateRange(options);
+    const dateRangeKey = this.buildDateRangeKey(options);
+
+    // 获取当前最新 review ID
+    const latestReviewId = this.db.getLatestReviewId({
+      projectId: project.id,
+      since: dateRange.since,
+      until: dateRange.until
+    });
+
+    // 检查缓存
+    if (!options.force) {
+      const cacheCheck = this.checkCache('project', project.id, dateRangeKey, latestReviewId);
+      if (cacheCheck.valid) {
+        if (onProgress) onProgress('使用缓存报告 (数据无变化)...');
+        return cacheCheck.cache.report_path;
+      }
+      if (onProgress && cacheCheck.reason !== '无缓存记录') {
+        onProgress(`缓存失效: ${cacheCheck.reason}，重新生成...`);
+      }
+    }
 
     // 收集数据
     if (onProgress) onProgress('正在收集项目数据...');
@@ -38,6 +92,10 @@ export class ReportGenerator {
     // 保存报告
     const outputPath = this.saveReport(html, projectName, options.output);
 
+    // 更新缓存
+    const dataHash = this.calculateDataHash(data);
+    this.db.saveReportCache('project', project.id, dateRangeKey, latestReviewId, dataHash, outputPath);
+
     return outputPath;
   }
 
@@ -51,6 +109,26 @@ export class ReportGenerator {
 
     // 构建日期范围
     const dateRange = this.buildDateRange(options);
+    const dateRangeKey = this.buildDateRangeKey(options);
+
+    // 获取当前最新 review ID
+    const latestReviewId = this.db.getLatestReviewId({
+      developerId: developer.id,
+      since: dateRange.since,
+      until: dateRange.until
+    });
+
+    // 检查缓存
+    if (!options.force) {
+      const cacheCheck = this.checkCache('developer', developer.id, dateRangeKey, latestReviewId);
+      if (cacheCheck.valid) {
+        if (onProgress) onProgress('使用缓存报告 (数据无变化)...');
+        return cacheCheck.cache.report_path;
+      }
+      if (onProgress && cacheCheck.reason !== '无缓存记录') {
+        onProgress(`缓存失效: ${cacheCheck.reason}，重新生成...`);
+      }
+    }
 
     // 收集数据
     if (onProgress) onProgress('正在收集开发者数据...');
@@ -66,6 +144,10 @@ export class ReportGenerator {
     // 保存报告
     const safeName = developerEmail.replace(/[@.]/g, '_');
     const outputPath = this.saveReport(html, `developer_${safeName}`, options.output);
+
+    // 更新缓存
+    const dataHash = this.calculateDataHash(data);
+    this.db.saveReportCache('developer', developer.id, dateRangeKey, latestReviewId, dataHash, outputPath);
 
     return outputPath;
   }

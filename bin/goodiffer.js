@@ -89,6 +89,7 @@ program
   .option('--until <date>', '结束日期 (YYYY-MM-DD)')
   .option('-o, --output <path>', '输出文件路径')
   .option('--open', '生成后自动打开')
+  .option('-f, --force', '强制重新生成 (忽略缓存)')
   .action(async (options) => {
     await reportCommand(options);
   });

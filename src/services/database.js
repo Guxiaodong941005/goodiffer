@@ -91,19 +91,23 @@ class GoodifferDatabase {
       )
     `);
 
-    // Issues 详细表
+    // Issues 详细表 (支持新旧两种格式)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS issues (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         review_id INTEGER NOT NULL,
-        level TEXT NOT NULL,
-        type TEXT NOT NULL,
-        file TEXT NOT NULL,
+        level TEXT,
+        type TEXT,
+        file TEXT,
         line TEXT,
         code TEXT,
-        description TEXT NOT NULL,
+        description TEXT,
         suggestion TEXT,
         fix_prompt TEXT,
+        title TEXT,
+        body TEXT,
+        priority INTEGER,
+        confidence_score REAL,
         FOREIGN KEY (review_id) REFERENCES reviews(id) ON DELETE CASCADE
       )
     `);
@@ -130,6 +134,48 @@ class GoodifferDatabase {
       CREATE INDEX IF NOT EXISTS idx_issues_review ON issues(review_id);
       CREATE INDEX IF NOT EXISTS idx_issues_level ON issues(level);
     `);
+
+    // 报告缓存表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS report_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_type TEXT NOT NULL,
+        target_id INTEGER NOT NULL,
+        date_range_key TEXT NOT NULL,
+        last_review_id INTEGER NOT NULL,
+        data_hash TEXT NOT NULL,
+        report_path TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(report_type, target_id, date_range_key)
+      )
+    `);
+
+    // 迁移：添加新列到 issues 表 (如果不存在)
+    this.migrateIssuesTable();
+  }
+
+  // 数据库迁移：为 issues 表添加新字段
+  migrateIssuesTable() {
+    try {
+      // 检查是否有 title 列
+      const columns = this.db.prepare("PRAGMA table_info(issues)").all();
+      const columnNames = columns.map(c => c.name);
+
+      if (!columnNames.includes('title')) {
+        this.db.exec('ALTER TABLE issues ADD COLUMN title TEXT');
+      }
+      if (!columnNames.includes('body')) {
+        this.db.exec('ALTER TABLE issues ADD COLUMN body TEXT');
+      }
+      if (!columnNames.includes('priority')) {
+        this.db.exec('ALTER TABLE issues ADD COLUMN priority INTEGER');
+      }
+      if (!columnNames.includes('confidence_score')) {
+        this.db.exec('ALTER TABLE issues ADD COLUMN confidence_score REAL');
+      }
+    } catch (e) {
+      // 忽略迁移错误
+    }
   }
 
   // ============ 项目操作 ============
@@ -253,19 +299,59 @@ class GoodifferDatabase {
 
     const reviewId = result.lastInsertRowid;
 
-    // 插入 issues
+    // 插入 issues (支持新旧两种格式)
     if (issues && issues.length > 0) {
       const insertIssue = this.db.prepare(`
-        INSERT INTO issues (review_id, level, type, file, line, code, description, suggestion, fix_prompt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO issues (review_id, level, type, file, line, code, description, suggestion, fix_prompt, title, body, priority, confidence_score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const issue of issues) {
-        insertIssue.run(
-          reviewId, issue.level, issue.type || '', issue.file || '',
-          issue.line || '', issue.code || '', issue.description || '',
-          issue.suggestion || '', issue.fixPrompt || ''
-        );
+        // 判断是新格式还是旧格式
+        const isNewFormat = issue.priority !== undefined || issue.title !== undefined;
+
+        if (isNewFormat) {
+          // 新格式 (findings)
+          const file = issue.code_location?.absolute_file_path || '';
+          const lineRange = issue.code_location?.line_range;
+          const line = lineRange ? `${lineRange.start}-${lineRange.end}` : '';
+          // 将 priority 映射到 level
+          const priorityToLevel = { 0: 'error', 1: 'error', 2: 'warning', 3: 'info' };
+          const level = priorityToLevel[issue.priority] || 'info';
+
+          insertIssue.run(
+            reviewId,
+            level,
+            '', // type
+            file,
+            line,
+            '', // code
+            issue.body || '',
+            issue.suggestion || '',
+            issue.fixPrompt || '',
+            issue.title || '',
+            issue.body || '',
+            issue.priority,
+            issue.confidence_score || null
+          );
+        } else {
+          // 旧格式 (issues)
+          insertIssue.run(
+            reviewId,
+            issue.level || 'info',
+            issue.type || '',
+            issue.file || '',
+            issue.line || '',
+            issue.code || '',
+            issue.description || '',
+            issue.suggestion || '',
+            issue.fixPrompt || '',
+            '', // title
+            '', // body
+            null, // priority
+            null  // confidence_score
+          );
+        }
       }
     }
 
@@ -500,6 +586,63 @@ class GoodifferDatabase {
     }
 
     return reviews;
+  }
+
+  // ============ 报告缓存操作 ============
+
+  // 获取报告缓存
+  getReportCache(reportType, targetId, dateRangeKey) {
+    return this.db.prepare(`
+      SELECT * FROM report_cache
+      WHERE report_type = ? AND target_id = ? AND date_range_key = ?
+    `).get(reportType, targetId, dateRangeKey);
+  }
+
+  // 保存报告缓存
+  saveReportCache(reportType, targetId, dateRangeKey, lastReviewId, dataHash, reportPath) {
+    return this.db.prepare(`
+      INSERT OR REPLACE INTO report_cache (report_type, target_id, date_range_key, last_review_id, data_hash, report_path, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(reportType, targetId, dateRangeKey, lastReviewId, dataHash, reportPath);
+  }
+
+  // 获取最新 review ID (用于缓存检测)
+  getLatestReviewId(filters = {}) {
+    const { projectId, developerId, since, until } = filters;
+
+    let sql = 'SELECT MAX(id) as max_id FROM reviews WHERE 1=1';
+    const params = [];
+
+    if (projectId) {
+      sql += ' AND project_id = ?';
+      params.push(projectId);
+    }
+
+    if (developerId) {
+      sql += ' AND developer_id = ?';
+      params.push(developerId);
+    }
+
+    if (since) {
+      sql += ' AND commit_date >= ?';
+      params.push(since);
+    }
+
+    if (until) {
+      sql += ' AND commit_date <= ?';
+      params.push(until);
+    }
+
+    const result = this.db.prepare(sql).get(...params);
+    return result?.max_id || 0;
+  }
+
+  // 删除过期缓存
+  cleanExpiredCache(days = 7) {
+    return this.db.prepare(`
+      DELETE FROM report_cache
+      WHERE created_at < datetime('now', '-' || ? || ' days')
+    `).run(days);
   }
 
   close() {
