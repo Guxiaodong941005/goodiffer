@@ -1,0 +1,52 @@
+{
+  "name": "goodiffer",
+  "version": "1.0.0",
+  "description": "AI-powered git diff analyzer for code review - 智能代码审查工具",
+  "type": "module",
+  "bin": {
+    "goodiffer": "./bin/goodiffer.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node bin/goodiffer.js"
+  },
+  "keywords": [
+    "git",
+    "diff",
+    "code-review",
+    "ai",
+    "cli",
+    "claude",
+    "openai",
+    "gpt",
+    "anthropic",
+    "code-analysis",
+    "developer-tools"
+  ],
+  "author": "kris",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kris/goodiffer"
+  },
+  "homepage": "https://github.com/kris/goodiffer#readme",
+  "bugs": {
+    "url": "https://github.com/kris/goodiffer/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "conf": "^12.0.0",
+    "inquirer": "^9.2.15",
+    "openai": "^4.70.0",
+    "ora": "^8.0.1",
+    "simple-git": "^3.22.0"
+  }
+}
