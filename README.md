@@ -62,6 +62,14 @@ goodiffer --commit <commit-sha>
 
 # 分析 commit 范围
 goodiffer --from <start-sha> --to <end-sha>
+
+# 分析最近 n 条 commit (n <= 10)
+goodiffer -n 3          # 分析最近 3 条 commit
+goodiffer -n 5          # 分析最近 5 条 commit
+
+# 分析第 n 条到第 m 条 commit (m-n <= 10)
+goodiffer -n 2 -m 5     # 分析第 2 到第 5 条 commit
+goodiffer -n 3 -m 8     # 分析第 3 到第 8 条 commit
 ```
 
 ### 配置管理
