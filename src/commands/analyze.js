@@ -164,7 +164,14 @@ export async function analyzeCommand(options) {
           commitMatch = parsed.commitMatch || false;
           commitMatchReason = parsed.commitMatchReason || '';
 
-          if (parsed.issues && Array.isArray(parsed.issues)) {
+          // 支持新格式 findings (按优先级统计)
+          if (parsed.findings && Array.isArray(parsed.findings)) {
+            issues = parsed.findings;
+            errorCount = issues.filter(i => i.priority === 0 || i.priority === 1).length; // P0, P1 算 error
+            warningCount = issues.filter(i => i.priority === 2).length; // P2 算 warning
+            infoCount = issues.filter(i => i.priority === 3 || i.priority === undefined).length; // P3 算 info
+          } else if (parsed.issues && Array.isArray(parsed.issues)) {
+            // 兼容旧格式
             issues = parsed.issues;
             errorCount = issues.filter(i => i.level === 'error').length;
             warningCount = issues.filter(i => i.level === 'warning').length;
@@ -348,7 +355,13 @@ async function analyzeMultipleCommits(options, config, git) {
               commitMatch = parsed.commitMatch || false;
               commitMatchReason = parsed.commitMatchReason || '';
 
-              if (parsed.issues && Array.isArray(parsed.issues)) {
+              // 支持新格式 findings (按优先级统计)
+              if (parsed.findings && Array.isArray(parsed.findings)) {
+                issues = parsed.findings;
+                errorCount = issues.filter(i => i.priority === 0 || i.priority === 1).length;
+                warningCount = issues.filter(i => i.priority === 2).length;
+                infoCount = issues.filter(i => i.priority === 3 || i.priority === undefined).length;
+              } else if (parsed.issues && Array.isArray(parsed.issues)) {
                 issues = parsed.issues;
                 errorCount = issues.filter(i => i.level === 'error').length;
                 warningCount = issues.filter(i => i.level === 'warning').length;

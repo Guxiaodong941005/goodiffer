@@ -43,42 +43,118 @@ export function generateReport(aiResponse, commitInfo) {
     console.log();
   }
 
+  // 显示 Overall Correctness
+  if (result.overall_correctness) {
+    const isCorrect = result.overall_correctness === 'patch is correct';
+    const correctIcon = isCorrect ? chalk.green('✓ CORRECT') : chalk.red('✗ INCORRECT');
+    console.log(chalk.bold('🏁 Overall:'), correctIcon);
+    if (result.overall_explanation) {
+      console.log(chalk.gray('   '), result.overall_explanation);
+    }
+    if (result.overall_confidence_score !== undefined) {
+      const confidence = (result.overall_confidence_score * 100).toFixed(0);
+      console.log(chalk.gray('    置信度:'), chalk.cyan(`${confidence}%`));
+    }
+    console.log();
+  }
+
   logger.divider();
 
-  // 按级别分组显示问题
+  // 按优先级分组显示 findings
+  const findings = result.findings || [];
+
+  // 兼容旧格式 issues
   const issues = result.issues || [];
-  const errors = issues.filter(i => i.level === 'error');
-  const warnings = issues.filter(i => i.level === 'warning');
-  const infos = issues.filter(i => i.level === 'info');
 
-  // 显示错误
-  if (errors.length > 0) {
-    console.log();
-    console.log(chalk.red.bold(`🔴 ERRORS (${errors.length})`));
-    console.log();
-    errors.forEach((issue, index) => {
-      printIssue(issue, `E${String(index + 1).padStart(3, '0')}`, chalk.red);
-    });
-  }
+  if (findings.length > 0) {
+    // 新格式: 按优先级分组
+    const p0 = findings.filter(f => f.priority === 0);
+    const p1 = findings.filter(f => f.priority === 1);
+    const p2 = findings.filter(f => f.priority === 2);
+    const p3 = findings.filter(f => f.priority === 3);
+    const noP = findings.filter(f => f.priority === undefined || f.priority === null);
 
-  // 显示警告
-  if (warnings.length > 0) {
-    console.log();
-    console.log(chalk.yellow.bold(`🟡 WARNINGS (${warnings.length})`));
-    console.log();
-    warnings.forEach((issue, index) => {
-      printIssue(issue, `W${String(index + 1).padStart(3, '0')}`, chalk.yellow);
-    });
-  }
+    // 显示 P0
+    if (p0.length > 0) {
+      console.log();
+      console.log(chalk.red.bold(`🔴 P0 - CRITICAL (${p0.length})`));
+      console.log();
+      p0.forEach((finding, index) => {
+        printFinding(finding, `P0-${index + 1}`, chalk.red);
+      });
+    }
 
-  // 显示信息
-  if (infos.length > 0) {
-    console.log();
-    console.log(chalk.blue.bold(`🔵 INFO (${infos.length})`));
-    console.log();
-    infos.forEach((issue, index) => {
-      printIssue(issue, `I${String(index + 1).padStart(3, '0')}`, chalk.blue);
-    });
+    // 显示 P1
+    if (p1.length > 0) {
+      console.log();
+      console.log(chalk.yellow.bold(`🟠 P1 - URGENT (${p1.length})`));
+      console.log();
+      p1.forEach((finding, index) => {
+        printFinding(finding, `P1-${index + 1}`, chalk.yellow);
+      });
+    }
+
+    // 显示 P2
+    if (p2.length > 0) {
+      console.log();
+      console.log(chalk.blue.bold(`🟡 P2 - NORMAL (${p2.length})`));
+      console.log();
+      p2.forEach((finding, index) => {
+        printFinding(finding, `P2-${index + 1}`, chalk.blue);
+      });
+    }
+
+    // 显示 P3
+    if (p3.length > 0) {
+      console.log();
+      console.log(chalk.gray.bold(`🔵 P3 - LOW (${p3.length})`));
+      console.log();
+      p3.forEach((finding, index) => {
+        printFinding(finding, `P3-${index + 1}`, chalk.gray);
+      });
+    }
+
+    // 显示无优先级的
+    if (noP.length > 0) {
+      console.log();
+      console.log(chalk.white.bold(`⚪ OTHER (${noP.length})`));
+      console.log();
+      noP.forEach((finding, index) => {
+        printFinding(finding, `F${index + 1}`, chalk.white);
+      });
+    }
+  } else if (issues.length > 0) {
+    // 旧格式兼容: 按级别分组
+    const errors = issues.filter(i => i.level === 'error');
+    const warnings = issues.filter(i => i.level === 'warning');
+    const infos = issues.filter(i => i.level === 'info');
+
+    if (errors.length > 0) {
+      console.log();
+      console.log(chalk.red.bold(`🔴 ERRORS (${errors.length})`));
+      console.log();
+      errors.forEach((issue, index) => {
+        printIssue(issue, `E${String(index + 1).padStart(3, '0')}`, chalk.red);
+      });
+    }
+
+    if (warnings.length > 0) {
+      console.log();
+      console.log(chalk.yellow.bold(`🟡 WARNINGS (${warnings.length})`));
+      console.log();
+      warnings.forEach((issue, index) => {
+        printIssue(issue, `W${String(index + 1).padStart(3, '0')}`, chalk.yellow);
+      });
+    }
+
+    if (infos.length > 0) {
+      console.log();
+      console.log(chalk.blue.bold(`🔵 INFO (${infos.length})`));
+      console.log();
+      infos.forEach((issue, index) => {
+        printIssue(issue, `I${String(index + 1).padStart(3, '0')}`, chalk.blue);
+      });
+    }
   }
 
   // 显示关联风险
@@ -96,13 +172,73 @@ export function generateReport(aiResponse, commitInfo) {
   // 统计摘要
   logger.divider();
   console.log();
-  console.log(
-    chalk.gray('📈 统计:'),
-    chalk.red(`${errors.length} errors`),
-    chalk.yellow(`${warnings.length} warnings`),
-    chalk.blue(`${infos.length} info`),
-    chalk.magenta(`${risks.length} risks`)
-  );
+
+  if (findings.length > 0) {
+    const p0Count = findings.filter(f => f.priority === 0).length;
+    const p1Count = findings.filter(f => f.priority === 1).length;
+    const p2Count = findings.filter(f => f.priority === 2).length;
+    const p3Count = findings.filter(f => f.priority === 3).length;
+
+    console.log(
+      chalk.gray('📈 统计:'),
+      chalk.red(`${p0Count} P0`),
+      chalk.yellow(`${p1Count} P1`),
+      chalk.blue(`${p2Count} P2`),
+      chalk.gray(`${p3Count} P3`),
+      chalk.magenta(`${risks.length} risks`)
+    );
+  } else {
+    const errors = issues.filter(i => i.level === 'error');
+    const warnings = issues.filter(i => i.level === 'warning');
+    const infos = issues.filter(i => i.level === 'info');
+
+    console.log(
+      chalk.gray('📈 统计:'),
+      chalk.red(`${errors.length} errors`),
+      chalk.yellow(`${warnings.length} warnings`),
+      chalk.blue(`${infos.length} info`),
+      chalk.magenta(`${risks.length} risks`)
+    );
+  }
+  console.log();
+}
+
+function printFinding(finding, id, colorFn) {
+  // 显示标题
+  console.log(colorFn(`[${id}]`), chalk.bold(finding.title));
+
+  // 显示位置
+  if (finding.code_location) {
+    const loc = finding.code_location;
+    const lineRange = loc.line_range ? `${loc.line_range.start}-${loc.line_range.end}` : '?';
+    console.log(chalk.gray(`    📍 ${loc.absolute_file_path}:${lineRange}`));
+  }
+
+  // 显示置信度
+  if (finding.confidence_score !== undefined) {
+    const confidence = (finding.confidence_score * 100).toFixed(0);
+    console.log(chalk.gray(`    🎯 置信度: ${confidence}%`));
+  }
+
+  // 显示问题描述
+  console.log();
+  console.log(chalk.white('    '), finding.body);
+
+  if (finding.suggestion) {
+    console.log();
+    console.log(chalk.green('    💡 建议:'), finding.suggestion);
+  }
+
+  if (finding.fixPrompt) {
+    console.log();
+    console.log(chalk.cyan('    📋 修复提示词 (复制到 cc/codex):'));
+    console.log(chalk.gray('    ┌' + '─'.repeat(52) + '┐'));
+    const lines = finding.fixPrompt.split('\n');
+    lines.forEach(line => {
+      console.log(chalk.gray('    │ ') + line.padEnd(50) + chalk.gray(' │'));
+    });
+    console.log(chalk.gray('    └' + '─'.repeat(52) + '┘'));
+  }
   console.log();
 }
 

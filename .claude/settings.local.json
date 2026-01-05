@@ -24,7 +24,9 @@
       "Bash(goodiffer:*)",
       "Bash(node -e:*)",
       "Bash(node bin/goodiffer.js:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git tag:*)",
+      "Bash(npm publish:*)"
     ]
   }
 }
