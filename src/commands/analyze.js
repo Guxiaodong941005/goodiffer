@@ -98,11 +98,12 @@ export async function analyzeCommand(options) {
     // 检查是否启用代码上下文模式
     const useContext = options.context;
 
-    // 如果启用上下文模式，检查环境
+    // 如果启用上下文模式，提示信息
     if (useContext) {
-      if (!MCPClientService.isInClaudeCode()) {
-        logger.warning('--context 选项需要在 Claude Code 环境中运行');
-        logger.info('将使用本地文件读取作为后备方案');
+      if (MCPClientService.isInClaudeCode()) {
+        logger.info('已启用代码上下文模式 (MCP)');
+      } else {
+        logger.info('已启用代码上下文模式 (本地文件读取)');
       }
     }
 

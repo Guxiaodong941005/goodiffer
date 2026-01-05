@@ -35,11 +35,23 @@ export class MCPClientService {
    * @param {string} options.cwd - 工作目录
    */
   async connect(options = {}) {
+    // 如果不在 Claude Code 环境中，跳过 MCP 连接
+    if (!MCPClientService.isInClaudeCode()) {
+      this.connected = false;
+      return false;
+    }
+
     const {
-      command = 'npx',
-      args = ['-y', '@anthropic-ai/claude-code-mcp'],
+      command,
+      args,
       cwd = process.cwd()
     } = options;
+
+    // 如果没有提供 command，无法连接
+    if (!command) {
+      this.connected = false;
+      return false;
+    }
 
     try {
       this.client = new Client({
@@ -54,7 +66,7 @@ export class MCPClientService {
       // 创建 stdio transport
       this.transport = new StdioClientTransport({
         command,
-        args,
+        args: args || [],
         cwd,
         env: {
           ...process.env,

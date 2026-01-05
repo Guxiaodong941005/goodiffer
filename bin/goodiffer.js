@@ -12,7 +12,7 @@ import { reportCommand } from '../src/commands/report.js';
 program
   .name('goodiffer')
   .description('AI-powered git diff analyzer for code review')
-  .version('1.1.0');
+  .version('1.1.1');
 
 // 默认命令 - 分析
 program

@@ -91,11 +91,14 @@ export class AIClient {
 
       const data = await response.json();
 
+      // 检查停止原因
+      const stopReason = data.stop_reason;
+
       // 检查是否需要调用工具
       const toolUseBlocks = data.content.filter(block => block.type === 'tool_use');
 
-      if (toolUseBlocks.length === 0) {
-        // 没有工具调用，返回文本结果
+      // 如果停止原因是 end_turn 或没有工具调用，返回文本结果
+      if (stopReason === 'end_turn' || toolUseBlocks.length === 0) {
         const textContent = data.content
           .filter(block => block.type === 'text')
           .map(block => block.text)

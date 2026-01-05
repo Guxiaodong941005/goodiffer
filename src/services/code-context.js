@@ -16,10 +16,10 @@ export class CodeContextService {
 
   /**
    * 初始化服务
-   * @param {boolean} enableMCP - 是否启用 MCP
+   * @param {boolean} enableMCP - 是否启用 MCP (仅在 Claude Code 环境中有效)
    */
   async initialize(enableMCP = false) {
-    if (enableMCP) {
+    if (enableMCP && MCPClientService.isInClaudeCode()) {
       this.mcpClient = getMCPClient();
 
       // 尝试连接 Claude Code MCP
@@ -28,11 +28,8 @@ export class CodeContextService {
       });
 
       this.useMCP = connected;
-
-      if (!connected) {
-        logger.warning('MCP 连接失败，将使用本地文件读取');
-      }
     }
+    // 默认使用本地文件读取，无需警告
   }
 
   /**
