@@ -42,6 +42,123 @@ export class AIClient {
     }
   }
 
+  /**
+   * 带 Tool Use 的分析方法
+   * @param {string} prompt - 提示词
+   * @param {Array} tools - 工具定义
+   * @param {Function} toolExecutor - 工具执行器 (toolName, toolInput) => result
+   * @param {Function} onProgress - 进度回调
+   * @param {number} maxIterations - 最大迭代次数
+   */
+  async analyzeWithTools(prompt, tools, toolExecutor, onProgress, maxIterations = 5) {
+    if (!this.useAnthropicFormat) {
+      // OpenAI 暂不支持 tool use，回退到普通分析
+      return this.analyzeStream(prompt, onProgress);
+    }
+
+    const baseUrl = (this.apiHost || 'https://api.anthropic.com').replace(/\/+$/, '');
+    const url = `${baseUrl}/v1/messages`;
+
+    let messages = [{ role: 'user', content: prompt }];
+    let iterations = 0;
+
+    while (iterations < maxIterations) {
+      iterations++;
+
+      if (onProgress) {
+        onProgress({ type: 'iteration', iteration: iterations });
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: this.model || 'claude-sonnet-4-20250514',
+          max_tokens: 8192,
+          tools: tools,
+          messages: messages
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+
+      // 检查是否需要调用工具
+      const toolUseBlocks = data.content.filter(block => block.type === 'tool_use');
+
+      if (toolUseBlocks.length === 0) {
+        // 没有工具调用，返回文本结果
+        const textContent = data.content
+          .filter(block => block.type === 'text')
+          .map(block => block.text)
+          .join('');
+
+        return textContent;
+      }
+
+      // 处理工具调用
+      if (onProgress) {
+        onProgress({
+          type: 'tool_calls',
+          tools: toolUseBlocks.map(t => ({ name: t.name, input: t.input }))
+        });
+      }
+
+      // 添加助手消息
+      messages.push({ role: 'assistant', content: data.content });
+
+      // 执行工具并收集结果
+      const toolResults = [];
+      for (const toolBlock of toolUseBlocks) {
+        try {
+          const result = await toolExecutor(toolBlock.name, toolBlock.input);
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: toolBlock.id,
+            content: typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+          });
+
+          if (onProgress) {
+            onProgress({
+              type: 'tool_result',
+              tool: toolBlock.name,
+              success: true
+            });
+          }
+        } catch (error) {
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: toolBlock.id,
+            content: JSON.stringify({ error: error.message }),
+            is_error: true
+          });
+
+          if (onProgress) {
+            onProgress({
+              type: 'tool_result',
+              tool: toolBlock.name,
+              success: false,
+              error: error.message
+            });
+          }
+        }
+      }
+
+      // 添加工具结果消息
+      messages.push({ role: 'user', content: toolResults });
+    }
+
+    throw new Error(`超过最大迭代次数 (${maxIterations})`);
+  }
+
   // 使用原生 fetch 调用 Claude API (绕过 SDK 的 Cloudflare 问题)
   async analyzeWithClaudeFetch(prompt, onChunk) {
     const baseUrl = (this.apiHost || 'https://api.anthropic.com').replace(/\/+$/, '');

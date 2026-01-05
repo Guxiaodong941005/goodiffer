@@ -12,7 +12,7 @@ import { reportCommand } from '../src/commands/report.js';
 program
   .name('goodiffer')
   .description('AI-powered git diff analyzer for code review')
-  .version('1.0.1');
+  .version('1.1.0');
 
 // 默认命令 - 分析
 program
@@ -22,6 +22,7 @@ program
   .option('--to <sha>', '结束 commit (与 --from 配合使用)')
   .option('-n <number>', '分析最近 n 条 commit (n <= 10), 或与 -m 配合表示起始位置')
   .option('-m <number>', '与 -n 配合使用，表示结束位置 (m-n <= 10)')
+  .option('--context', '启用代码上下文获取 (需要 Claude Code 环境)')
   .option('--no-save', '不保存到数据库')
   .action(async (options) => {
     await analyzeCommand(options);

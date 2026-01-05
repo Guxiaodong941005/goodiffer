@@ -2,9 +2,11 @@ import ora from 'ora';
 import { getConfig, isConfigured } from '../utils/config-store.js';
 import { GitService } from '../services/git.js';
 import { AIClient } from '../services/ai-client.js';
-import { buildReviewPrompt } from '../prompts/review-prompt.js';
+import { buildReviewPrompt, buildReviewPromptWithTools } from '../prompts/review-prompt.js';
 import { generateReport } from '../services/reporter.js';
 import { getDatabase } from '../services/database.js';
+import { CodeContextService } from '../services/code-context.js';
+import { MCPClientService } from '../services/mcp-client.js';
 import logger from '../utils/logger.js';
 
 // 解析 AI 响应
@@ -93,8 +95,21 @@ export async function analyzeCommand(options) {
 
     spinner.succeed('获取 Git 信息完成');
 
+    // 检查是否启用代码上下文模式
+    const useContext = options.context;
+
+    // 如果启用上下文模式，检查环境
+    if (useContext) {
+      if (!MCPClientService.isInClaudeCode()) {
+        logger.warning('--context 选项需要在 Claude Code 环境中运行');
+        logger.info('将使用本地文件读取作为后备方案');
+      }
+    }
+
     // 构建提示词
-    const prompt = buildReviewPrompt(commitInfo.message, diff);
+    const prompt = useContext
+      ? buildReviewPromptWithTools(commitInfo.message, diff)
+      : buildReviewPrompt(commitInfo.message, diff);
 
     // 调用 AI 分析
     spinner = ora('AI 正在分析代码...').start();
@@ -103,10 +118,38 @@ export async function analyzeCommand(options) {
     let response = '';
 
     try {
-      response = await aiClient.analyzeStream(prompt, (chunk) => {
-        // 流式输出时更新 spinner
-        spinner.text = `AI 正在分析... (${response.length} 字符)`;
-      });
+      if (useContext) {
+        // 启用代码上下文的分析模式
+        const codeContext = new CodeContextService(process.cwd());
+        await codeContext.initialize(true); // 尝试启用 MCP
+
+        const tools = CodeContextService.getToolDefinitions();
+
+        response = await aiClient.analyzeWithTools(
+          prompt,
+          tools,
+          async (toolName, toolInput) => {
+            return await codeContext.executeTool(toolName, toolInput);
+          },
+          (progress) => {
+            if (progress.type === 'iteration') {
+              spinner.text = `AI 正在分析... (迭代 ${progress.iteration})`;
+            } else if (progress.type === 'tool_calls') {
+              const toolNames = progress.tools.map(t => t.name).join(', ');
+              spinner.text = `AI 正在获取上下文: ${toolNames}`;
+            } else if (progress.type === 'tool_result') {
+              spinner.text = `AI 正在分析... (已获取 ${progress.tool} 结果)`;
+            }
+          }
+        );
+
+        await codeContext.close();
+      } else {
+        // 普通分析模式
+        response = await aiClient.analyzeStream(prompt, (chunk) => {
+          spinner.text = `AI 正在分析... (${response.length} 字符)`;
+        });
+      }
     } catch (error) {
       spinner.fail('AI 分析失败');
       if (error.message.includes('401')) {

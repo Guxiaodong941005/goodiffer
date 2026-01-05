@@ -101,4 +101,119 @@ Return the analysis result in JSON format:
 - All user-facing text MUST be in Chinese.`;
 }
 
+/**
+ * 构建带代码上下文工具的提示词
+ * 当启用 --context 选项时使用此版本
+ */
+export function buildReviewPromptWithTools(commitMessage, diff) {
+  return `You are acting as a reviewer for a proposed code change made by another engineer.
+
+## Available Tools
+
+You have access to tools that can help you understand the codebase better:
+
+1. **read_file** - Read source code files to understand function implementations, class definitions, etc.
+2. **find_definition** - Find where a function, class, or variable is defined.
+3. **search_code** - Search for code patterns across the project.
+4. **list_files** - List files in a directory to understand project structure.
+
+**When to use tools:**
+- When the diff calls a function whose implementation you need to verify
+- When you need to check how a modified function is used elsewhere
+- When you need to understand the types or interfaces involved
+- When the change might affect other parts of the codebase
+
+**Important:** Only use tools when necessary. If the diff is self-contained and clear, proceed without tools.
+
+## Review Guidelines
+
+Below are guidelines for determining whether the original author would appreciate the issue being flagged.
+
+1. It meaningfully impacts the accuracy, performance, security, or maintainability of the code.
+2. The bug is discrete and actionable (i.e. not a general issue with the codebase or a combination of multiple issues).
+3. Fixing the bug does not demand a level of rigor that is not present in the rest of the codebase.
+4. The bug was introduced in the commit (pre-existing bugs should not be flagged).
+5. The author of the original PR would likely fix the issue if they were made aware of it.
+6. The bug does not rely on unstated assumptions about the codebase or author's intent.
+7. It is not enough to speculate that a change may disrupt another part of the codebase, to be considered a bug, one must identify the other parts of the code that are provably affected.
+8. The bug is clearly not just an intentional change by the original author.
+
+## Comment Guidelines
+
+1. The comment should be clear about why the issue is a bug.
+2. The comment should appropriately communicate the severity of the issue.
+3. The comment should be brief. The body should be at most 1 paragraph.
+4. The comment should not include any chunks of code longer than 3 lines.
+5. The comment should clearly communicate the scenarios necessary for the bug to arise.
+6. The comment's tone should be matter-of-fact and not accusatory or overly positive.
+7. The comment should be written such that the original author can immediately grasp the idea.
+8. Avoid excessive flattery like "Great job ...", "Thanks for ...".
+
+## Priority Levels
+
+- [P0] – Drop everything to fix. Blocking release, operations, or major usage.
+- [P1] – Urgent. Should be addressed in the next cycle.
+- [P2] – Normal. To be fixed eventually.
+- [P3] – Low. Nice to have.
+
+## Commit Message
+${commitMessage}
+
+## Code Changes (Git Diff)
+\`\`\`diff
+${diff}
+\`\`\`
+
+## Task
+1. First, analyze the diff to understand what changed.
+2. If you need more context (function definitions, type definitions, etc.), use the available tools.
+3. Identify potential issues following the review guidelines.
+4. Provide an overall correctness verdict.
+
+## Output Format
+
+IMPORTANT: All text content MUST be written in Chinese (中文).
+
+Return the analysis result in JSON format:
+
+\`\`\`json
+{
+  "summary": "变更概述 (1-2句话，中文)",
+  "commitMatch": true/false,
+  "commitMatchReason": "代码是否符合commit描述的说明 (中文)",
+  "context_fetched": ["获取的额外上下文说明，如 '读取了 src/utils/helper.js 的 validateUser 函数'"],
+  "findings": [
+    {
+      "title": "[P0-P3] 问题标题 (≤80字符，中文)",
+      "body": "问题描述 (中文)",
+      "confidence_score": 0.0-1.0,
+      "priority": 0-3,
+      "code_location": {
+        "absolute_file_path": "文件路径",
+        "line_range": {"start": 行号, "end": 行号}
+      },
+      "suggestion": "修复建议 (中文)",
+      "fixPrompt": "修复提示词 (中文)"
+    }
+  ],
+  "associationRisks": [
+    {
+      "changedFile": "修改的文件",
+      "relatedFiles": ["可能受影响的文件"],
+      "risk": "风险描述 (中文)",
+      "checkPrompt": "检查提示词 (中文)"
+    }
+  ],
+  "overall_correctness": "patch is correct" | "patch is incorrect",
+  "overall_explanation": "判定理由 (中文)",
+  "overall_confidence_score": 0.0-1.0
+}
+\`\`\`
+
+## Notes
+- Use tools strategically - only when the context would genuinely help identify issues.
+- Only report real issues that the author would want to fix.
+- All user-facing text MUST be in Chinese.`;
+}
+
 export default buildReviewPrompt;

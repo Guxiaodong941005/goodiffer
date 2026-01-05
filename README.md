@@ -13,6 +13,7 @@ AI-powered git diff analyzer for code review - 基于 AI 的 Git Diff 智能分�
 - 🔗 检测代码关联性风险
 - 📋 生成可复制的修复提示词，方便在 Claude Code / Codex 中使用
 - 🌐 支持第三方 API 代理
+- 🔮 **NEW** 支持代码上下文获取 (Tool Use)，AI 可按需读取相关源码
 
 ## Installation
 
@@ -70,7 +71,27 @@ goodiffer -n 5          # 分析最近 5 条 commit
 # 分析第 n 条到第 m 条 commit (m-n <= 10)
 goodiffer -n 2 -m 5     # 分析第 2 到第 5 条 commit
 goodiffer -n 3 -m 8     # 分析第 3 到第 8 条 commit
+
+# 启用代码上下文获取 (AI 可按需读取相关源码)
+goodiffer --context     # 分析时 AI 可以读取项目中的其他文件
+goodiffer -c abc123 --context  # 分析指定 commit，启用上下文
 ```
+
+### 代码上下文模式 (--context)
+
+启用 `--context` 选项后，AI 在分析代码时可以：
+
+1. **read_file** - 读取项目中的源文件，了解函数/类的具体实现
+2. **find_definition** - 查找函数、类、变量的定义位置
+3. **search_code** - 在项目中搜索代码模式
+4. **list_files** - 列出目录结构
+
+这使得 AI 能够：
+- 验证被调用函数的实现是否正确
+- 检查类型定义和接口
+- 发现潜在的关联影响
+
+> **注意**: 此功能需要 Claude 模型（使用 Tool Use API），建议在 Claude Code 环境中使用。
 
 ### 配置管理
 
