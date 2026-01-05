@@ -7,7 +7,24 @@
       "Bash(git remote add:*)",
       "Bash(git branch:*)",
       "Bash(git push:*)",
-      "Bash(git remote set-url:*)"
+      "Bash(git remote set-url:*)",
+      "Bash(git config:*)",
+      "Bash(ssh-keyscan:*)",
+      "Bash(~/.ssh/known_hosts)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(npm install:*)",
+      "Bash(npm link)",
+      "Bash(goodiffer --help:*)",
+      "Bash(goodiffer history --help:*)",
+      "Bash(goodiffer report --help:*)",
+      "Bash(goodiffer stats:*)",
+      "Bash(goodiffer developer:*)",
+      "Bash(goodiffer config:*)",
+      "Bash(goodiffer:*)",
+      "Bash(node -e:*)",
+      "Bash(node bin/goodiffer.js:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
