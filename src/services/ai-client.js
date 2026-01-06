@@ -299,6 +299,252 @@ export class AIClient {
       return response.choices[0].message.content;
     }
   }
+
+  /**
+   * Codex 深度代码审查 (支持高推理模式和结构化输出)
+   * @param {string} prompt - 提示词
+   * @param {object} options - 配置选项
+   * @param {object} options.schema - JSON Schema (可选)
+   * @param {string} options.reasoningEffort - 推理强度: 'low'|'medium'|'high' (默认 'high')
+   * @param {Function} options.onProgress - 进度回调 (可选)
+   * @returns {Promise<object>} 结构化的审查结果
+   */
+  async analyzeWithCodex(prompt, options = {}) {
+    const {
+      schema = null,
+      reasoningEffort = 'high',
+      onProgress = null
+    } = options;
+
+    // Claude 模型也支持 Codex review，只是没有 reasoning 加成
+    if (this.useAnthropicFormat) {
+      return this.analyzeWithCodexClaude(prompt, options);
+    }
+
+    // 检测是否为 GPT-5.x-Codex 模型 (支持 reasoning 参数)
+    const isCodexModel = this.model && (
+      this.model.includes('gpt-5') ||
+      this.model.includes('codex') ||
+      this.model.includes('o3') ||
+      this.model.includes('o1')
+    );
+
+    // 所有 OpenAI 兼容模型都使用 Chat Completions API
+    return this.analyzeWithCodexChatCompletions(prompt, {
+      ...options,
+      isCodexModel
+    });
+  }
+
+  /**
+   * OpenAI Chat Completions API
+   * 支持普通 GPT 模型和 Codex 模型（通过 reasoning 参数）
+   * 使用原生 fetch 避免 SDK 兼容性问题
+   */
+  async analyzeWithCodexChatCompletions(prompt, options = {}) {
+    const {
+      schema = null,
+      reasoningEffort = 'high',
+      isCodexModel = false,
+      onProgress = null
+    } = options;
+
+    const baseUrl = this.buildOpenAIBaseUrl();
+    const url = `${baseUrl}/chat/completions`;
+
+    // 构建请求参数
+    const requestBody = {
+      model: this.model || 'gpt-4o',
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      max_tokens: 16000
+    };
+
+    // Codex 模型支持 reasoning 参数
+    if (isCodexModel && reasoningEffort && reasoningEffort !== 'none') {
+      if (onProgress) onProgress({
+        type: 'info',
+        message: `Codex 高推理模式: ${reasoningEffort}`
+      });
+      requestBody.reasoning = { effort: reasoningEffort };
+    }
+
+    // 注意: PackyAPI 等第三方代理可能不支持 response_format
+    // 通过 prompt 来控制 JSON 输出，不使用 response_format 参数
+
+    try {
+      if (onProgress) onProgress({
+        type: 'analyzing',
+        message: isCodexModel ? 'Codex 深度分析中...' : 'GPT 深度分析中...'
+      });
+
+      // 使用原生 fetch 替代 SDK，避免兼容性问题
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices[0].message.content;
+
+      if (onProgress) onProgress({ type: 'complete', message: '分析完成' });
+
+      try {
+        return JSON.parse(content);
+      } catch (parseError) {
+        const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[1].trim());
+        }
+        throw new Error(`无法解析 AI 响应为 JSON: ${parseError.message}`);
+      }
+    } catch (error) {
+      if (onProgress) onProgress({ type: 'error', message: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Claude 版本的 Codex 深度审查
+   * Claude 不支持 reasoning 参数，但仍可使用 8 维度评估
+   */
+  async analyzeWithCodexClaude(prompt, options = {}) {
+    const { onProgress = null } = options;
+
+    if (onProgress) onProgress({
+      type: 'info',
+      message: 'Claude 模式: 8 维度深度审查 (无 reasoning 加成)'
+    });
+
+    const baseUrl = (this.apiHost || 'https://api.anthropic.com').replace(/\/+$/, '');
+    const url = `${baseUrl}/v1/messages`;
+
+    try {
+      if (onProgress) onProgress({ type: 'analyzing', message: 'Claude 深度分析中...' });
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: this.model || 'claude-sonnet-4-20250514',
+          max_tokens: 16000,
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+      const content = data.content[0].text;
+
+      if (onProgress) onProgress({ type: 'complete', message: '分析完成' });
+
+      // 解析 JSON 响应
+      try {
+        return JSON.parse(content);
+      } catch (parseError) {
+        // 如果解析失败，尝试提取 JSON
+        const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[1].trim());
+        }
+        throw new Error(`无法解析 Claude 响应为 JSON: ${parseError.message}`);
+      }
+    } catch (error) {
+      if (onProgress) onProgress({ type: 'error', message: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Codex 深度审查 (流式版本)
+   * 用于大型代码审查任务，提供实时反馈
+   */
+  async analyzeWithCodexStream(prompt, options = {}) {
+    const {
+      reasoningEffort = 'high',
+      onChunk = null,
+      onProgress = null
+    } = options;
+
+    if (this.useAnthropicFormat) {
+      return this.analyzeWithClaudeFetch(prompt, onChunk);
+    }
+
+    const isCodexModel = this.model && (
+      this.model.includes('gpt-5') ||
+      this.model.includes('codex') ||
+      this.model.includes('o3') ||
+      this.model.includes('o1')
+    );
+
+    const requestParams = {
+      model: this.model || 'gpt-4o',
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 16000,
+      stream: true
+    };
+
+    if (isCodexModel && reasoningEffort) {
+      if (onProgress) onProgress({
+        type: 'info',
+        message: `启用高推理模式: ${reasoningEffort}`
+      });
+      requestParams.reasoning = { effort: reasoningEffort };
+    }
+
+    let fullContent = '';
+
+    try {
+      const stream = await this.client.chat.completions.create(requestParams);
+
+      for await (const chunk of stream) {
+        const text = chunk.choices[0]?.delta?.content || '';
+        if (text) {
+          fullContent += text;
+          if (onChunk) {
+            onChunk(text);
+          }
+        }
+      }
+
+      return fullContent;
+    } catch (error) {
+      if (onProgress) onProgress({ type: 'error', message: error.message });
+      throw error;
+    }
+  }
 }
 
 export default AIClient;

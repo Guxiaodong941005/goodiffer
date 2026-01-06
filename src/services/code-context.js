@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { getMCPClient, MCPClientService } from './mcp-client.js';
+import { getLSPService } from './lsp-service.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -12,13 +13,16 @@ export class CodeContextService {
     this.projectRoot = projectRoot;
     this.mcpClient = null;
     this.useMCP = false;
+    this.lspService = null;
+    this.useLSP = false;
   }
 
   /**
    * 初始化服务
    * @param {boolean} enableMCP - 是否启用 MCP (仅在 Claude Code 环境中有效)
+   * @param {boolean} enableLSP - 是否启用 LSP
    */
-  async initialize(enableMCP = false) {
+  async initialize(enableMCP = false, enableLSP = true) {
     if (enableMCP && MCPClientService.isInClaudeCode()) {
       this.mcpClient = getMCPClient();
 
@@ -29,7 +33,26 @@ export class CodeContextService {
 
       this.useMCP = connected;
     }
-    // 默认使用本地文件读取，无需警告
+
+    // 初始化 LSP 服务
+    if (enableLSP) {
+      try {
+        this.lspService = getLSPService(this.projectRoot);
+        const languages = await this.lspService.detectLanguages();
+
+        if (languages.length > 0) {
+          // 尝试启动检测到的语言服务器
+          for (const lang of languages) {
+            const started = await this.lspService.startServer(lang);
+            if (started) {
+              this.useLSP = true;
+            }
+          }
+        }
+      } catch (error) {
+        logger.warning(`LSP 初始化失败: ${error.message}`);
+      }
+    }
   }
 
   /**
@@ -38,6 +61,9 @@ export class CodeContextService {
   async close() {
     if (this.mcpClient) {
       await this.mcpClient.disconnect();
+    }
+    if (this.lspService) {
+      await this.lspService.shutdown();
     }
   }
 
@@ -121,6 +147,87 @@ export class CodeContextService {
           },
           required: []
         }
+      },
+      // LSP 工具
+      {
+        name: 'get_type_info',
+        description: '获取代码位置的类型信息和文档。通过 LSP hover 功能获取变量、函数、类等的类型签名和 JSDoc/TSDoc 注释。',
+        input_schema: {
+          type: 'object',
+          properties: {
+            file_path: {
+              type: 'string',
+              description: '文件路径（相对于项目根目录）'
+            },
+            line: {
+              type: 'number',
+              description: '行号 (从 1 开始)'
+            },
+            character: {
+              type: 'number',
+              description: '列号 (从 1 开始)'
+            }
+          },
+          required: ['file_path', 'line', 'character']
+        }
+      },
+      {
+        name: 'find_references',
+        description: '查找符号在整个项目中的所有引用位置。用于了解函数、类、变量被使用的地方。',
+        input_schema: {
+          type: 'object',
+          properties: {
+            file_path: {
+              type: 'string',
+              description: '符号所在的文件路径'
+            },
+            line: {
+              type: 'number',
+              description: '行号 (从 1 开始)'
+            },
+            character: {
+              type: 'number',
+              description: '列号 (从 1 开始)'
+            }
+          },
+          required: ['file_path', 'line', 'character']
+        }
+      },
+      {
+        name: 'get_document_symbols',
+        description: '获取文件中的所有符号（函数、类、变量等）列表。快速了解文件结构和可用的导出。',
+        input_schema: {
+          type: 'object',
+          properties: {
+            file_path: {
+              type: 'string',
+              description: '要分析的文件路径'
+            }
+          },
+          required: ['file_path']
+        }
+      },
+      {
+        name: 'go_to_definition',
+        description: '跳转到符号的定义位置。使用 LSP 精确定位函数、类、变量的定义源码。',
+        input_schema: {
+          type: 'object',
+          properties: {
+            file_path: {
+              type: 'string',
+              description: '符号所在的文件路径'
+            },
+            line: {
+              type: 'number',
+              description: '行号 (从 1 开始)'
+            },
+            character: {
+              type: 'number',
+              description: '列号 (从 1 开始)'
+            }
+          },
+          required: ['file_path', 'line', 'character']
+        }
       }
     ];
   }
@@ -141,6 +248,15 @@ export class CodeContextService {
           return await this.searchCode(toolInput);
         case 'list_files':
           return await this.listFiles(toolInput);
+        // LSP 工具
+        case 'get_type_info':
+          return await this.getTypeInfo(toolInput);
+        case 'find_references':
+          return await this.findReferences(toolInput);
+        case 'get_document_symbols':
+          return await this.getDocumentSymbols(toolInput);
+        case 'go_to_definition':
+          return await this.goToDefinition(toolInput);
         default:
           return { error: `未知工具: ${toolName}` };
       }
@@ -202,9 +318,44 @@ export class CodeContextService {
    * 查找定义
    */
   async findDefinition({ symbol, file_hint }) {
-    // 优先使用 MCP 的 LSP 功能
-    if (this.useMCP && this.mcpClient && this.mcpClient.hasToolAvailable('goToDefinition')) {
+    // 优先使用本地 LSP 服务
+    if (this.useLSP && this.lspService) {
       // 需要先找到符号所在位置
+      const searchResult = await this.searchCode({ pattern: symbol, file_pattern: file_hint });
+      if (searchResult.matches && searchResult.matches.length > 0) {
+        const firstMatch = searchResult.matches[0];
+        try {
+          // 计算符号在行中的位置
+          const symbolIndex = firstMatch.content.indexOf(symbol);
+          const character = symbolIndex >= 0 ? symbolIndex + 1 : 1;
+
+          const defResult = await this.lspService.goToDefinition(
+            path.resolve(this.projectRoot, firstMatch.file),
+            firstMatch.line,
+            character
+          );
+
+          if (defResult.locations && defResult.locations.length > 0) {
+            // 转换为相对路径并读取定义代码
+            const definitions = [];
+            for (const loc of defResult.locations.slice(0, 3)) { // 最多 3 个定义
+              const relPath = path.relative(this.projectRoot, loc.file);
+              definitions.push({
+                file: relPath,
+                line: loc.line,
+                endLine: loc.endLine
+              });
+            }
+            return { matches: definitions, total: definitions.length, source: 'lsp' };
+          }
+        } catch {
+          // 回退到正则搜索
+        }
+      }
+    }
+
+    // 使用 MCP 的 LSP 功能（如果可用）
+    if (this.useMCP && this.mcpClient && this.mcpClient.hasToolAvailable('goToDefinition')) {
       const searchResult = await this.searchCode({ pattern: symbol, file_pattern: file_hint });
       if (searchResult.matches && searchResult.matches.length > 0) {
         const firstMatch = searchResult.matches[0];
@@ -353,6 +504,167 @@ export class CodeContextService {
       return { matches, total: matches.length };
     }
     return result;
+  }
+
+  // ============ LSP 工具方法 ============
+
+  /**
+   * 获取类型信息 (通过 LSP hover)
+   */
+  async getTypeInfo({ file_path, line, character }) {
+    if (!this.useLSP || !this.lspService) {
+      return { error: 'LSP 服务未启用' };
+    }
+
+    const fullPath = path.resolve(this.projectRoot, file_path);
+
+    // 安全检查
+    if (!fullPath.startsWith(this.projectRoot)) {
+      return { error: '不允许访问项目目录外的文件' };
+    }
+
+    try {
+      const result = await this.lspService.getHoverInfo(fullPath, line, character);
+
+      if (result.error) {
+        return { error: result.error };
+      }
+
+      return {
+        type_info: result.info,
+        range: result.range,
+        file: file_path,
+        position: { line, character }
+      };
+    } catch (error) {
+      return { error: `获取类型信息失败: ${error.message}` };
+    }
+  }
+
+  /**
+   * 查找引用
+   */
+  async findReferences({ file_path, line, character }) {
+    if (!this.useLSP || !this.lspService) {
+      return { error: 'LSP 服务未启用' };
+    }
+
+    const fullPath = path.resolve(this.projectRoot, file_path);
+
+    // 安全检查
+    if (!fullPath.startsWith(this.projectRoot)) {
+      return { error: '不允许访问项目目录外的文件' };
+    }
+
+    try {
+      const result = await this.lspService.findReferences(fullPath, line, character);
+
+      if (result.error) {
+        return { error: result.error };
+      }
+
+      // 转换为相对路径
+      const locations = (result.locations || []).map(loc => ({
+        file: loc.file ? path.relative(this.projectRoot, loc.file) : null,
+        line: loc.line,
+        character: loc.character,
+        endLine: loc.endLine,
+        endCharacter: loc.endCharacter
+      })).filter(loc => loc.file);
+
+      return {
+        references: locations,
+        total: locations.length
+      };
+    } catch (error) {
+      return { error: `查找引用失败: ${error.message}` };
+    }
+  }
+
+  /**
+   * 获取文档符号
+   */
+  async getDocumentSymbols({ file_path }) {
+    if (!this.useLSP || !this.lspService) {
+      return { error: 'LSP 服务未启用' };
+    }
+
+    const fullPath = path.resolve(this.projectRoot, file_path);
+
+    // 安全检查
+    if (!fullPath.startsWith(this.projectRoot)) {
+      return { error: '不允许访问项目目录外的文件' };
+    }
+
+    try {
+      const result = await this.lspService.getDocumentSymbols(fullPath);
+
+      if (result.error) {
+        return { error: result.error };
+      }
+
+      return {
+        file: file_path,
+        symbols: result.symbols || []
+      };
+    } catch (error) {
+      return { error: `获取文档符号失败: ${error.message}` };
+    }
+  }
+
+  /**
+   * 跳转到定义 (LSP)
+   */
+  async goToDefinition({ file_path, line, character }) {
+    if (!this.useLSP || !this.lspService) {
+      return { error: 'LSP 服务未启用' };
+    }
+
+    const fullPath = path.resolve(this.projectRoot, file_path);
+
+    // 安全检查
+    if (!fullPath.startsWith(this.projectRoot)) {
+      return { error: '不允许访问项目目录外的文件' };
+    }
+
+    try {
+      const result = await this.lspService.goToDefinition(fullPath, line, character);
+
+      if (result.error) {
+        return { error: result.error };
+      }
+
+      // 转换为相对路径
+      const locations = (result.locations || []).map(loc => ({
+        file: loc.file ? path.relative(this.projectRoot, loc.file) : null,
+        line: loc.line,
+        character: loc.character,
+        endLine: loc.endLine,
+        endCharacter: loc.endCharacter
+      })).filter(loc => loc.file);
+
+      return {
+        definitions: locations,
+        total: locations.length
+      };
+    } catch (error) {
+      return { error: `跳转定义失败: ${error.message}` };
+    }
+  }
+
+  /**
+   * 检查 LSP 是否可用
+   */
+  isLSPAvailable() {
+    return this.useLSP && this.lspService !== null;
+  }
+
+  /**
+   * 获取 LSP 支持的语言列表
+   */
+  getActiveLanguages() {
+    if (!this.lspService) return [];
+    return this.lspService.getActiveLanguages();
   }
 }
 

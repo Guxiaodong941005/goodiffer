@@ -13,7 +13,9 @@ AI-powered git diff analyzer for code review - 基于 AI 的 Git Diff 智能分�
 - 🔗 检测代码关联性风险
 - 📋 生成可复制的修复提示词，方便在 Claude Code / Codex 中使用
 - 🌐 支持第三方 API 代理
-- 🔮 **NEW** 支持代码上下文获取 (Tool Use)，AI 可按需读取相关源码
+- 🔮 支持代码上下文获取 (Tool Use)，AI 可按需读取相关源码
+- ⚡ **NEW** LSP 集成 - 提供类型信息、引用查找、符号导航等智能功能
+- 🧠 **NEW** Codex 深度审查 - 基于 GPT-5.2 的 8 维度深度代码审查
 
 ## Installation
 
@@ -79,19 +81,135 @@ goodiffer -c abc123 --context  # 分析指定 commit，启用上下文
 
 ### 代码上下文模式 (--context)
 
-启用 `--context` 选项后，AI 在分析代码时可以：
+启用 `--context` 选项后，AI 在分析代码时可以使用以下工具：
 
+#### 基础工具
 1. **read_file** - 读取项目中的源文件，了解函数/类的具体实现
 2. **find_definition** - 查找函数、类、变量的定义位置
 3. **search_code** - 在项目中搜索代码模式
 4. **list_files** - 列出目录结构
 
+#### LSP 增强工具 (TypeScript/JavaScript)
+5. **get_type_info** - 获取变量、函数的类型信息和文档
+6. **find_references** - 查找符号在整个项目中的所有引用位置
+7. **get_document_symbols** - 获取文件中的所有符号列表（函数、类、变量等）
+8. **go_to_definition** - 使用 LSP 精确定位符号的定义位置
+
+**LSP 工具优势：**
+- ✅ 精确的类型分析（支持 TypeScript/JavaScript）
+- ✅ 跨文件引用查找
+- ✅ 快速了解文件结构
+- ✅ 自动回退到正则搜索
+
 这使得 AI 能够：
 - 验证被调用函数的实现是否正确
 - 检查类型定义和接口
 - 发现潜在的关联影响
+- 了解代码的调用关系和依赖
 
-> **注意**: 此功能需要 Claude 模型（使用 Tool Use API），建议在 Claude Code 环境中使用。
+> **注意**: 此功能需要 Claude 模型（使用 Tool Use API）。LSP 功能自动启用，无需额外配置。
+
+### Codex 深度代码审查 (NEW)
+
+使用 OpenAI Codex (GPT-5.2) 进行深度代码审查，提供 8 维度质量评估和高推理分析。
+
+```bash
+# 使用 Codex 深度审查最近一次 commit
+goodiffer codex
+
+# 审查暂存区
+goodiffer codex -s
+
+# 审查指定 commit
+goodiffer codex -c abc123
+
+# 指定推理强度 (low/medium/high)
+goodiffer codex --reasoning high
+```
+
+#### Codex Review 特性
+
+**8 维度质量评估：**
+1. **Code Style & Formatting** - 代码风格与格式
+2. **Security & Compliance** - 安全性与合规性
+3. **Error Handling & Logging** - 错误处理与日志
+4. **Readability & Maintainability** - 可读性与可维护性
+5. **Performance & Scalability** - 性能与可扩展性
+6. **Testing & Quality Assurance** - 测试与质量保证
+7. **Documentation & Version Control** - 文档与版本控制
+8. **Accessibility & Internationalization** - 可访问性与国际化
+
+**评分系统：**
+- ⭐ **Extraordinary** (90-100) - 卓越质量
+- ✓ **Acceptable** (70-89) - 符合标准
+- ⚠️ **Poor** (0-69) - 需要改进
+
+**高推理模式：**
+- 使用 `reasoning: { effort: "high" }` 进行深度分析
+- 提供置信度评分（0.0-1.0）
+- 生成正确性判断（patch is correct / incorrect）
+
+**结构化输出：**
+- 使用 JSON Schema 定义输出格式（降低 35% 失败率）
+- 精确的文件/行号引用
+- 优先级分级（P0-P3）
+
+**输出示例：**
+```
+╭──────────────────────────────────────────────────────────╮
+│  Codex Deep Code Review Report                          │
+╰──────────────────────────────────────────────────────────╯
+
+📝 Commit: abc1234
+📋 Message: feat: add user authentication
+
+📊 Summary: 添加了用户认证功能...
+
+═══════════════════════════════════════════════════════════
+
+🎯 8-Dimensional Quality Assessment
+
+1. Security & Compliance
+   🌟 Rating: EXTRAORDINARY | Score: 95/100
+   密码加密使用了 bcrypt，符合安全标准
+
+2. Error Handling & Logging
+   ⚠️ Rating: POOR | Score: 60/100
+   缺少异常处理和日志记录
+   ▸ API 调用未处理错误情况
+   ▸ 缺少关键操作的日志
+
+═══════════════════════════════════════════════════════════
+
+⚖️  Overall Assessment
+
+✅ Correctness: PATCH IS CORRECT
+📈 Confidence: 85% (High)
+💡 Explanation: 代码功能正确，但需改进错误处理
+
+═══════════════════════════════════════════════════════════
+
+🔍 Findings (2)
+
+🟠 P1 - URGENT (1)
+
+[A] [P1] API 调用缺少错误处理
+
+   Location: src/auth/api.js:45-52
+   Confidence: 90% (Very High)
+   Dimension: Error Handling & Logging
+
+   在 loginUser 函数中直接调用 API 而未处理可能的网络错误...
+
+   💡 Suggestion: 添加 try-catch 块处理异常
+
+   📋 修复提示词 (复制到 Claude Code/Codex):
+   ┌──────────────────────────────────────────────────┐
+   │ 在 src/auth/api.js:45 添加 try-catch 处理异常   │
+   └──────────────────────────────────────────────────┘
+```
+
+> **推荐使用场景**: 关键代码审查、生产环境发布前、安全敏感功能
 
 ### 配置管理
 

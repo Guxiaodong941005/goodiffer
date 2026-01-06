@@ -26,7 +26,11 @@
       "Bash(node bin/goodiffer.js:*)",
       "Bash(git commit:*)",
       "Bash(git tag:*)",
-      "Bash(npm publish:*)"
+      "Bash(npm publish:*)",
+      "Bash(find:*)",
+      "Bash(env)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs"
     ]
   }
 }

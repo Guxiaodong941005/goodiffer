@@ -2,25 +2,35 @@ import ora from 'ora';
 import { getConfig, isConfigured } from '../utils/config-store.js';
 import { GitService } from '../services/git.js';
 import { AIClient } from '../services/ai-client.js';
-import { buildReviewPrompt, buildReviewPromptWithTools } from '../prompts/review-prompt.js';
-import { generateReport } from '../services/reporter.js';
+import { buildCodexReviewPrompt } from '../prompts/codex-review-prompt.js';
+import { generateCodexReport } from '../services/codex-reporter.js';
 import { getDatabase } from '../services/database.js';
-import { CodeContextService } from '../services/code-context.js';
-import { MCPClientService } from '../services/mcp-client.js';
 import logger from '../utils/logger.js';
 
-// 解析 AI 响应
-function parseAIResponse(response) {
-  try {
-    let jsonStr = response;
-    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1].trim();
-    }
-    return JSON.parse(jsonStr);
-  } catch {
-    return null;
+/**
+ * 提取统计数据
+ */
+function extractStats(result) {
+  const stats = {
+    p0: 0,
+    p1: 0,
+    p2: 0,
+    p3: 0,
+    risks: 0
+  };
+
+  if (result.findings) {
+    result.findings.forEach(f => {
+      const priority = f.priority || 3;
+      stats[`p${priority}`]++;
+    });
   }
+
+  if (result.associationRisks) {
+    stats.risks = result.associationRisks.length;
+  }
+
+  return stats;
 }
 
 export async function analyzeCommand(options) {
@@ -89,71 +99,49 @@ export async function analyzeCommand(options) {
       process.exit(1);
     }
 
-    // 获取项目信息和分支
+    // 获取项目信息
     const projectName = await git.getProjectName();
     const branch = await git.getCurrentBranch();
+    const changedFiles = await git.getChangedFiles(
+      options.commit || (options.from ? `${options.from}..${options.to}` : 'HEAD~1')
+    );
 
     spinner.succeed('获取 Git 信息完成');
 
-    // 检查是否启用代码上下文模式
-    const useContext = options.context;
-
-    // 如果启用上下文模式，提示信息
-    if (useContext) {
-      if (MCPClientService.isInClaudeCode()) {
-        logger.info('已启用代码上下文模式 (MCP)');
-      } else {
-        logger.info('已启用代码上下文模式 (本地文件读取)');
-      }
-    }
-
-    // 构建提示词
-    const prompt = useContext
-      ? buildReviewPromptWithTools(commitInfo.message, diff)
-      : buildReviewPrompt(commitInfo.message, diff);
+    // 构建 Codex review 提示词
+    const prompt = buildCodexReviewPrompt(commitInfo.message, diff, {
+      repository: projectName,
+      baseSha: options.from || 'HEAD~1',
+      headSha: options.to || commitInfo.sha,
+      changedFiles
+    });
 
     // 调用 AI 分析
-    spinner = ora('AI 正在分析代码...').start();
+    spinner = ora('Codex 深度分析中...').start();
 
     const aiClient = new AIClient(config);
-    let response = '';
+    let result = null;
 
     try {
-      if (useContext) {
-        // 启用代码上下文的分析模式
-        const codeContext = new CodeContextService(process.cwd());
-        await codeContext.initialize(true); // 尝试启用 MCP
+      // 使用 Codex 深度分析
+      const reasoningEffort = options.reasoning || 'high';
 
-        const tools = CodeContextService.getToolDefinitions();
-
-        response = await aiClient.analyzeWithTools(
-          prompt,
-          tools,
-          async (toolName, toolInput) => {
-            return await codeContext.executeTool(toolName, toolInput);
-          },
-          (progress) => {
-            if (progress.type === 'iteration') {
-              spinner.text = `AI 正在分析... (迭代 ${progress.iteration})`;
-            } else if (progress.type === 'tool_calls') {
-              const toolNames = progress.tools.map(t => t.name).join(', ');
-              spinner.text = `AI 正在获取上下文: ${toolNames}`;
-            } else if (progress.type === 'tool_result') {
-              spinner.text = `AI 正在分析... (已获取 ${progress.tool} 结果)`;
-            }
-          },
-          10 // 增加最大迭代次数到 10
-        );
-
-        await codeContext.close();
-      } else {
-        // 普通分析模式
-        response = await aiClient.analyzeStream(prompt, (chunk) => {
-          spinner.text = `AI 正在分析... (${response.length} 字符)`;
-        });
-      }
+      result = await aiClient.analyzeWithCodex(prompt, {
+        reasoningEffort: reasoningEffort,
+        onProgress: (progress) => {
+          if (progress.type === 'info') {
+            spinner.text = progress.message;
+          } else if (progress.type === 'analyzing') {
+            spinner.text = '🧠 Codex 深度分析中...';
+          } else if (progress.type === 'complete') {
+            spinner.succeed('✅ 分析完成');
+          } else if (progress.type === 'error') {
+            spinner.fail(`❌ ${progress.message}`);
+          }
+        }
+      });
     } catch (error) {
-      spinner.fail('AI 分析失败');
+      spinner.fail('分析失败');
       if (error.message.includes('401')) {
         logger.error('API Key 无效或已过期');
       } else if (error.message.includes('403')) {
@@ -174,10 +162,8 @@ export async function analyzeCommand(options) {
       process.exit(1);
     }
 
-    spinner.succeed('AI 分析完成');
-
-    // 生成报告
-    generateReport(response, commitInfo);
+    // 生成 Codex 格式报告
+    generateCodexReport(result, commitInfo);
 
     // 保存到数据库 (除非指定 --no-save)
     if (options.save !== false) {
@@ -190,44 +176,8 @@ export async function analyzeCommand(options) {
         // 获取或创建开发者
         const developer = db.getOrCreateDeveloper(author.email, author.name);
 
-        // 解析 AI 响应
-        const parsed = parseAIResponse(response);
-
         // 提取统计数据
-        let summary = '';
-        let commitMatch = false;
-        let commitMatchReason = '';
-        let errorCount = 0;
-        let warningCount = 0;
-        let infoCount = 0;
-        let riskCount = 0;
-        let issues = [];
-        let associationRisks = [];
-
-        if (parsed) {
-          summary = parsed.summary || '';
-          commitMatch = parsed.commitMatch || false;
-          commitMatchReason = parsed.commitMatchReason || '';
-
-          // 支持新格式 findings (按优先级统计)
-          if (parsed.findings && Array.isArray(parsed.findings)) {
-            issues = parsed.findings;
-            errorCount = issues.filter(i => i.priority === 0 || i.priority === 1).length; // P0, P1 算 error
-            warningCount = issues.filter(i => i.priority === 2).length; // P2 算 warning
-            infoCount = issues.filter(i => i.priority === 3 || i.priority === undefined).length; // P3 算 info
-          } else if (parsed.issues && Array.isArray(parsed.issues)) {
-            // 兼容旧格式
-            issues = parsed.issues;
-            errorCount = issues.filter(i => i.level === 'error').length;
-            warningCount = issues.filter(i => i.level === 'warning').length;
-            infoCount = issues.filter(i => i.level === 'info').length;
-          }
-
-          if (parsed.associationRisks && Array.isArray(parsed.associationRisks)) {
-            associationRisks = parsed.associationRisks;
-            riskCount = associationRisks.length;
-          }
-        }
+        const stats = extractStats(result);
 
         // 保存 review 记录
         const reviewId = db.saveReview({
@@ -243,18 +193,20 @@ export async function analyzeCommand(options) {
           filesChanged: diffStats.filesChanged,
           insertions: diffStats.insertions,
           deletions: diffStats.deletions,
-          diffContent: null, // 不存储 diff 内容以节省空间
-          aiResponse: response,
-          summary,
-          commitMatch,
-          commitMatchReason,
-          errorCount,
-          warningCount,
-          infoCount,
-          riskCount,
+          diffContent: null,
+          aiResponse: JSON.stringify(result, null, 2),
+          summary: result.summary || '',
+          commitMatch: result.commitMatch || false,
+          commitMatchReason: result.commitMatchReason || '',
+          errorCount: stats.p0 + stats.p1,
+          warningCount: stats.p2,
+          infoCount: stats.p3,
+          riskCount: stats.risks,
           modelUsed: config.model,
-          issues,
-          associationRisks
+          issues: result.findings || [],
+          associationRisks: result.associationRisks || [],
+          dimensions: result.dimensions || [],
+          overallAssessment: result.overall_assessment || {}
         });
 
         logger.success(`Review #${reviewId} 已保存到数据库`);
@@ -284,7 +236,6 @@ async function analyzeMultipleCommits(options, config, git) {
   }
 
   if (n !== null && m === null) {
-    // 只有 -n，表示分析最近 n 条
     if (n <= 0 || n > 10) {
       logger.error('n 必须在 1-10 之间');
       process.exit(1);
@@ -292,7 +243,6 @@ async function analyzeMultipleCommits(options, config, git) {
   }
 
   if (n !== null && m !== null) {
-    // 同时有 -n 和 -m，表示第 n 条到第 m 条
     if (n <= 0 || m <= 0) {
       logger.error('n 和 m 必须大于 0');
       process.exit(1);
@@ -313,10 +263,8 @@ async function analyzeMultipleCommits(options, config, git) {
     // 获取 commits
     let commits;
     if (m !== null) {
-      // 第 n 条到第 m 条
       commits = await git.getCommitRange(n, m);
     } else {
-      // 最近 n 条
       commits = await git.getRecentCommits(n);
     }
 
@@ -347,10 +295,9 @@ async function analyzeMultipleCommits(options, config, git) {
       const commit = commits[i];
       const shortSha = commit.sha.substring(0, 7);
 
-      spinner = ora(`[${i + 1}/${commits.length}] 分析 commit ${shortSha}...`).start();
+      spinner = ora(`[${i + 1}/${commits.length}] Codex 分析 commit ${shortSha}...`).start();
 
       try {
-        // 获取 diff
         const diff = await git.getCommitDiff(commit.sha);
         if (!diff || diff.trim() === '') {
           spinner.warn(`[${i + 1}/${commits.length}] commit ${shortSha} 没有代码变更，跳过`);
@@ -358,14 +305,26 @@ async function analyzeMultipleCommits(options, config, git) {
         }
 
         const diffStats = await git.getDiffStats(`${commit.sha}~1`, commit.sha);
+        const changedFiles = await git.getChangedFiles(commit.sha);
 
-        // 构建提示词并分析
-        const prompt = buildReviewPrompt(commit.message, diff);
-        let response = '';
+        // 构建 Codex prompt
+        const prompt = buildCodexReviewPrompt(commit.message, diff, {
+          repository: projectName,
+          baseSha: `${commit.sha}~1`,
+          headSha: commit.sha,
+          changedFiles
+        });
+
+        let result = null;
 
         try {
-          response = await aiClient.analyzeStream(prompt, (chunk) => {
-            spinner.text = `[${i + 1}/${commits.length}] 分析 commit ${shortSha}... (${response.length} 字符)`;
+          result = await aiClient.analyzeWithCodex(prompt, {
+            reasoningEffort: options.reasoning || 'high',
+            onProgress: (progress) => {
+              if (progress.type === 'info') {
+                spinner.text = `[${i + 1}/${commits.length}] ${progress.message}`;
+              }
+            }
           });
         } catch (error) {
           spinner.fail(`[${i + 1}/${commits.length}] commit ${shortSha} 分析失败: ${error.message}`);
@@ -375,7 +334,7 @@ async function analyzeMultipleCommits(options, config, git) {
         spinner.succeed(`[${i + 1}/${commits.length}] commit ${shortSha} 分析完成`);
 
         // 生成报告
-        generateReport(response, { sha: commit.sha, message: commit.message });
+        generateCodexReport(result, { sha: commit.sha, message: commit.message });
 
         // 保存到数据库
         if (options.save !== false) {
@@ -383,41 +342,7 @@ async function analyzeMultipleCommits(options, config, git) {
             const db = getDatabase();
             const project = db.getOrCreateProject(projectName, process.cwd());
             const developer = db.getOrCreateDeveloper(commit.author.email, commit.author.name);
-            const parsed = parseAIResponse(response);
-
-            let summary = '';
-            let commitMatch = false;
-            let commitMatchReason = '';
-            let errorCount = 0;
-            let warningCount = 0;
-            let infoCount = 0;
-            let riskCount = 0;
-            let issues = [];
-            let associationRisks = [];
-
-            if (parsed) {
-              summary = parsed.summary || '';
-              commitMatch = parsed.commitMatch || false;
-              commitMatchReason = parsed.commitMatchReason || '';
-
-              // 支持新格式 findings (按优先级统计)
-              if (parsed.findings && Array.isArray(parsed.findings)) {
-                issues = parsed.findings;
-                errorCount = issues.filter(i => i.priority === 0 || i.priority === 1).length;
-                warningCount = issues.filter(i => i.priority === 2).length;
-                infoCount = issues.filter(i => i.priority === 3 || i.priority === undefined).length;
-              } else if (parsed.issues && Array.isArray(parsed.issues)) {
-                issues = parsed.issues;
-                errorCount = issues.filter(i => i.level === 'error').length;
-                warningCount = issues.filter(i => i.level === 'warning').length;
-                infoCount = issues.filter(i => i.level === 'info').length;
-              }
-
-              if (parsed.associationRisks && Array.isArray(parsed.associationRisks)) {
-                associationRisks = parsed.associationRisks;
-                riskCount = associationRisks.length;
-              }
-            }
+            const stats = extractStats(result);
 
             const reviewId = db.saveReview({
               projectId: project.id,
@@ -433,17 +358,19 @@ async function analyzeMultipleCommits(options, config, git) {
               insertions: diffStats.insertions,
               deletions: diffStats.deletions,
               diffContent: null,
-              aiResponse: response,
-              summary,
-              commitMatch,
-              commitMatchReason,
-              errorCount,
-              warningCount,
-              infoCount,
-              riskCount,
+              aiResponse: JSON.stringify(result, null, 2),
+              summary: result.summary || '',
+              commitMatch: result.commitMatch || false,
+              commitMatchReason: result.commitMatchReason || '',
+              errorCount: stats.p0 + stats.p1,
+              warningCount: stats.p2,
+              infoCount: stats.p3,
+              riskCount: stats.risks,
               modelUsed: config.model,
-              issues,
-              associationRisks
+              issues: result.findings || [],
+              associationRisks: result.associationRisks || [],
+              dimensions: result.dimensions || [],
+              overallAssessment: result.overall_assessment || {}
             });
 
             results.push({ commit, reviewId, success: true });

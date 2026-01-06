@@ -1,6 +1,6 @@
 {
   "name": "goodiffer",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "AI-powered git diff analyzer for code review - 智能代码审查工具",
   "type": "module",
   "bin": {
