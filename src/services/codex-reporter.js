@@ -40,6 +40,63 @@ export function generateCodexReport(result, commitInfo = {}) {
     console.log('');
   }
 
+  // 调用关系分析
+  if (result.call_graph_analysis && result.call_graph_analysis.length > 0) {
+    console.log(chalk.bold.blue('═'.repeat(60)));
+    console.log(chalk.bold.blue('\n🕸️  调用/引用关系梳理\n'));
+
+    result.call_graph_analysis.forEach((item, index) => {
+      const title = item.symbol || `Symbol ${index + 1}`;
+      const kind = item.kind ? ` (${item.kind})` : '';
+      console.log(chalk.bold(`${index + 1}. ${title}${kind}`));
+
+      if (item.delta) {
+        console.log(chalk.gray('   Δ 变化:'), item.delta);
+      }
+
+      if (item.before_calls) {
+        const callers = (item.before_calls.callers || []).join('; ') || '-';
+        const callees = (item.before_calls.callees || []).join('; ') || '-';
+        console.log(chalk.gray('   改动前 调用方:'), callers);
+        console.log(chalk.gray('   改动前 被调方:'), callees);
+      }
+
+      if (item.after_calls) {
+        const callers = (item.after_calls.callers || []).join('; ') || '-';
+        const callees = (item.after_calls.callees || []).join('; ') || '-';
+        console.log(chalk.gray('   改动后 调用方:'), callers);
+        console.log(chalk.gray('   改动后 被调方:'), callees);
+      }
+
+      if (item.notes) {
+        console.log(chalk.gray('   备注:'), item.notes);
+      }
+
+      console.log('');
+    });
+  }
+
+  // 前后逻辑对比
+  if (result.logic_changes && result.logic_changes.length > 0) {
+    console.log(chalk.bold.blue('═'.repeat(60)));
+    console.log(chalk.bold.blue('\n📚  改动前后逻辑对比\n'));
+
+    result.logic_changes.forEach((item, index) => {
+      const scope = item.scope || `Scope ${index + 1}`;
+      console.log(chalk.bold(`${index + 1}. ${scope}`));
+      if (item.before) console.log(chalk.gray('   改动前:'), item.before);
+      if (item.after) console.log(chalk.gray('   改动后:'), item.after);
+      if (item.change) console.log(chalk.gray('   差异:'), item.change);
+      if (item.risk) console.log(chalk.gray('   风险:'), item.risk);
+
+      if (item.recommended_tests && item.recommended_tests.length > 0) {
+        console.log(chalk.gray('   建议测试:'), item.recommended_tests.join('; '));
+      }
+
+      console.log('');
+    });
+  }
+
   // 8 维度评估
   if (result.dimensions && result.dimensions.length > 0) {
     console.log(chalk.bold.magenta('═'.repeat(60)));

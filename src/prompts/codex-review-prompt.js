@@ -119,6 +119,17 @@ Evaluate the code changes across these dimensions:
 5. **Be matter-of-fact**: No excessive praise or accusation
 6. **Be focused**: Avoid code snippets longer than 3 lines
 
+## LSP-Guided Reference & Call Graph Workflow
+
+Goal: avoid diff-only blind spots by mapping how touched symbols are used before and after the change.
+
+1. Identify touched symbols (functions/classes/methods/types) from the diff.
+2. Baseline (before change): use LSP/reference search/go-to-definition to list key callers and callees; actively open the main reference call sites to read surrounding code and summarize pre-change behavior/contract.
+3. Updated (after change): repeat for the new code, capturing new/removed callers/callees, signature or contract changes, side effects, exceptions, and concurrency/transaction assumptions.
+4. Compare and record deltas: behavior changes, call graph shifts, and which callers/implementations are affected.
+5. If context is missing (e.g., LSP unavailable), state the gap explicitly; otherwise avoid leaving placeholders like “未提供完整上下文” by fetching references via LSP.
+6. Use this sweep to drive findings, association risks, and recommended tests.
+
 ## Repository Context
 
 ${repository ? `Repository: ${repository}` : ''}
@@ -138,9 +149,10 @@ ${diff}
 
 1. **Understand Intent**: Analyze the commit message to grasp what the author intended
 2. **Analyze Changes**: Review the diff line by line
-3. **8-Dimensional Assessment**: Evaluate each dimension and assign ratings
-4. **Identify Issues**: Flag actionable issues with exact file/line citations
-5. **Overall Verdict**: Determine if the patch is correct or incorrect
+3. **Reference & Call Graph Sweep**: For touched symbols, capture before/after callers & callees (via LSP/reference search), summarize behavior deltas, and note affected callers/implementations
+4. **8-Dimensional Assessment**: Evaluate each dimension and assign ratings
+5. **Identify Issues**: Flag actionable issues with exact file/line citations
+6. **Overall Verdict**: Determine if the patch is correct or incorrect
 
 ## Output Format
 
@@ -157,6 +169,32 @@ Return the analysis in the following JSON structure:
     "head_ref": "${headSha || 'unknown'}",
     "changed_files": ${JSON.stringify(changedFiles)}
   },
+  "call_graph_analysis": [
+    {
+      "symbol": "函数/方法/类 名称 (含所属类或模块)",
+      "kind": "function|method|class|interface",
+      "before_calls": {
+        "callers": ["改动前的主要调用方 (文件:行 + 中文摘要)"],
+        "callees": ["改动前内部调用/依赖 (文件:行 + 中文摘要)"]
+      },
+      "after_calls": {
+        "callers": ["改动后的主要调用方"],
+        "callees": ["改动后的内部调用/依赖"]
+      },
+      "delta": "调用关系/可见性/签名的变化，受影响的调用方 (中文)",
+      "notes": "缺失的上下文、假设或风险 (中文)"
+    }
+  ],
+  "logic_changes": [
+    {
+      "scope": "函数/类/模块 名称",
+      "before": "改动前的核心逻辑/契约 (中文)",
+      "after": "改动后的核心逻辑/契约 (中文)",
+      "change": "关键行为差异 (中文)",
+      "risk": "可能受影响的调用方/边界/异常/并发假设 (中文)",
+      "recommended_tests": ["建议补充的测试场景 (中文)"]
+    }
+  ],
   "dimensions": [
     {
       "name": "Code Style & Formatting",
@@ -254,6 +292,7 @@ Return the analysis in the following JSON structure:
 - **Accuracy First**: Ensure all file paths and line numbers are EXACTLY correct
 - **No False Positives**: Only report issues you're confident about
 - **No Over-Analysis**: If code is clean, it's OK to have empty findings
+- **Call Graph Required**: 填写 call_graph_analysis 和 logic_changes，若缺少上下文请说明
 - **Dimension Scoring**:
   - extraordinary: 90-100 (exceptional quality)
   - acceptable: 70-89 (meets standards)

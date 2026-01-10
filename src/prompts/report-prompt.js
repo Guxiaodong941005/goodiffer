@@ -36,35 +36,72 @@ ${dev.topIssues.map(issue => `- [${issue.level}] ${issue.file}: ${issue.descript
 ${dev.topRisks.map(risk => `- ${risk.changedFile}: ${risk.risk}`).join('\n') || '无'}
 `).join('\n')}
 
-## 最近 Review 记录
+## 最近 Review 记录 (含完整详情)
 ${data.recentReviews.map(r => `
 ---
-Commit: ${r.commitSha.substring(0, 8)} - ${r.commitMessage}
-开发者: ${r.developerName}
+ID: ${r.id}
+Commit: ${r.commitSha} - ${r.commitMessage}
+开发者: ${r.developerName} (${r.developerEmail})
+分支: ${r.branch || 'unknown'}
 日期: ${r.commitDate}
+代码变更: +${r.insertions} / -${r.deletions} (${r.filesChanged} files)
 摘要: ${r.summary || '无摘要'}
-问题统计: ${r.errorCount} errors, ${r.warningCount} warnings
+问题统计: ${r.errorCount} errors, ${r.warningCount} warnings, ${r.infoCount} infos
+风险统计: ${r.riskCount} risks
+
+### Issues 详情:
+${(r.issues || []).map(issue => `
+- [${issue.level?.toUpperCase() || 'INFO'}] ${issue.title || issue.type || '问题'}
+  文件: ${issue.file || 'N/A'}${issue.line ? ':' + issue.line : ''}
+  ${issue.code ? '代码: ' + issue.code : ''}
+  描述: ${issue.description || issue.body || 'N/A'}
+  建议: ${issue.suggestion || 'N/A'}
+`).join('') || '无问题'}
+
+### 关联风险:
+${(r.associationRisks || []).map(risk => `
+- 修改文件: ${risk.changedFile}
+  关联文件: ${risk.relatedFiles}
+  风险: ${risk.risk}
+`).join('') || '无关联风险'}
 `).join('\n')}
 
 ## 输出要求
 
 请生成一份专业的 H5 报告页面，要求如下：
 
-### 1. 页面结构
+### 1. 页面结构 (双视图设计)
+页面需要支持两种视图，通过 JavaScript 切换：
+
+**主视图 (列表视图)**:
 - **顶部头区**: 报告标题、项目名称、时间范围、生成时间
 - **概览卡片区**: 关键统计数字 (Reviews数、代码变更、问题总数)
 - **开发者分析区**: 每个开发者的详细分析卡片
 - **问题分布图**: 使用 CSS 绘制简单的柱状图
-- **时间线区**: Review 历史时间线
-- **详细记录区**: 可折叠的详细 Review 记录
+- **最近 Review 列表**: 可点击的 commit 列表卡片
 
-### 2. 开发者分析内容 (针对每个开发者生成)
-请根据数据分析每位开发者的：
-- **优点**: 从数据中提炼积极方面（如：代码质量好、commit描述清晰、错误率低等）
-- **缺点**: 需要改进的地方（基于 error/warning 数据分析）
-- **风险点**: 常见的关联风险模式
-- **工作记录**: commit 历史摘要和代码贡献统计
-- **改进建议**: 具体可执行的建议
+**详情视图 (Commit 详情页)**:
+- **返回按钮**: 点击返回主视图
+- **Commit 头部**:
+  - Commit SHA (短格式) 和完整 commit message
+  - 开发者信息和日期
+  - 分支名称
+  - 代码变更统计 (+X / -Y, Z files)
+- **摘要区**: 显示 summary 内容
+- **问题统计卡片**: 分类显示 errors/warnings/infos/risks 数量
+- **Issues 列表区**:
+  - 按级别 (error/warning/info) 分组显示
+  - 每个 issue 显示: 级别标签、文件位置、描述、建议
+  - 使用不同颜色区分级别 (红/橙/蓝)
+- **关联风险区**: 显示修改文件、关联文件和风险描述
+
+### 2. 交互功能 (重要!)
+- **点击 Review 列表中的任意一行**，切换到该 commit 的详情视图
+- **详情视图有返回按钮**，点击返回主列表视图
+- 使用 JavaScript 控制显示/隐藏，实现 SPA 式体验
+- 不需要 URL 变化，只需要 DOM 显示切换
+- 点击开发者卡片展开详情
+- 统计数字悬停显示详细信息
 
 ### 3. 视觉设计
 - 现代简洁的卡片式设计
@@ -76,6 +113,7 @@ Commit: ${r.commitSha.substring(0, 8)} - ${r.commitMessage}
   - 背景: #F9FAFB
 - 圆角卡片和阴影效果
 - 支持响应式布局（移动端适配）
+- Review 列表项需要有悬停效果，明确表示可点击
 
 ### 4. 技术要求
 - **单文件 HTML**：所有 CSS 和 JavaScript 内联
@@ -83,12 +121,22 @@ Commit: ${r.commitSha.substring(0, 8)} - ${r.commitMessage}
 - **图表用 CSS 绘制**：不使用 Chart.js 等库
 - **支持打印**：添加打印媒体查询
 - **中文界面**
-- **折叠功能**：详细记录区域可展开/收起
+- **所有 commit 的详情数据**都要嵌入到 HTML 中（可以用 JSON 或直接渲染隐藏的 DOM）
 
-### 5. 交互功能
-- 点击开发者卡片展开详情
-- 详细记录区可折叠
-- 统计数字悬停显示详细信息
+### 5. JavaScript 实现提示
+\`\`\`javascript
+// 参考实现结构
+function showCommitDetail(commitId) {
+  document.getElementById('main-view').style.display = 'none';
+  document.getElementById('detail-view-' + commitId).style.display = 'block';
+}
+
+function showMainView() {
+  // 隐藏所有详情视图
+  document.querySelectorAll('.commit-detail-view').forEach(el => el.style.display = 'none');
+  document.getElementById('main-view').style.display = 'block';
+}
+\`\`\`
 
 直接输出完整的 HTML 代码，不要包含 markdown 代码块标记，不要有任何解释文字。`;
 }
@@ -133,28 +181,72 @@ ${data.topRisks.map(risk => `
 - 风险: ${risk.risk}
 `).join('\n') || '无关联风险记录'}
 
-## 详细 Review 记录
+## 详细 Review 记录 (含完整详情)
 ${data.reviews.map(r => `
 ---
+ID: ${r.id}
 项目: ${r.projectName}
-Commit: ${r.commitSha.substring(0, 8)} - ${r.commitMessage}
+Commit: ${r.commitSha} - ${r.commitMessage}
+分支: ${r.branch || 'unknown'}
 日期: ${r.commitDate}
+代码变更: +${r.insertions} / -${r.deletions} (${r.filesChanged} files)
 摘要: ${r.summary || '无'}
 问题: ${r.errorCount}E / ${r.warningCount}W / ${r.infoCount}I
+风险: ${r.riskCount}
+
+### Issues 详情:
+${(r.issues || []).map(issue => `
+- [${issue.level?.toUpperCase() || 'INFO'}] ${issue.title || issue.type || '问题'}
+  文件: ${issue.file || 'N/A'}${issue.line ? ':' + issue.line : ''}
+  ${issue.code ? '代码: ' + issue.code : ''}
+  描述: ${issue.description || issue.body || 'N/A'}
+  建议: ${issue.suggestion || 'N/A'}
+`).join('') || '无问题'}
+
+### 关联风险:
+${(r.associationRisks || []).map(risk => `
+- 修改文件: ${risk.changedFile}
+  关联文件: ${risk.relatedFiles}
+  风险: ${risk.risk}
+`).join('') || '无关联风险'}
 `).join('\n')}
 
 ## 输出要求
 
 生成个人 Code Review 报告 H5 页面，要求：
 
-### 1. 页面结构
+### 1. 页面结构 (双视图设计)
+页面需要支持两种视图，通过 JavaScript 切换：
+
+**主视图 (列表视图)**:
 - **个人概览卡片**: 姓名、团队、关键指标
 - **能力分析区**: 优点、缺点、风险点详细分析
 - **趋势图区**: 问题数量趋势（CSS绘制）
-- **工作记录**: 按项目分组的 commit 时间线
+- **工作记录列表**: 可点击的 commit 列表，按项目分组
 - **改进建议**: 3-5条具体建议
 
-### 2. 能力分析内容
+**详情视图 (Commit 详情页)**:
+- **返回按钮**: 点击返回主视图
+- **Commit 头部**:
+  - Commit SHA (短格式) 和完整 commit message
+  - 项目名称和日期
+  - 分支名称
+  - 代码变更统计 (+X / -Y, Z files)
+- **摘要区**: 显示 summary 内容
+- **问题统计卡片**: 分类显示 errors/warnings/infos/risks 数量
+- **Issues 列表区**:
+  - 按级别 (error/warning/info) 分组显示
+  - 每个 issue 显示: 级别标签、文件位置、描述、建议
+  - 使用不同颜色区分级别 (红/橙/蓝)
+- **关联风险区**: 显示修改文件、关联文件和风险描述
+
+### 2. 交互功能 (重要!)
+- **点击工作记录列表中的任意一行**，切换到该 commit 的详情视图
+- **详情视图有返回按钮**，点击返回主列表视图
+- 使用 JavaScript 控制显示/隐藏，实现 SPA 式体验
+- 不需要 URL 变化，只需要 DOM 显示切换
+
+### 3. 能力分析内容
 **优点** (从数据提炼):
 - 代码质量方面的积极表现
 - commit message 清晰度评价
@@ -168,18 +260,34 @@ Commit: ${r.commitSha.substring(0, 8)} - ${r.commitMessage}
 - 常见的关联风险模式
 - 需要额外注意的代码修改习惯
 
-### 3. 改进建议
+### 4. 改进建议
 基于数据给出 3-5 条具体可执行的建议，例如：
 - "建议在修改 X 类文件时，同时检查 Y 文件的相关逻辑"
 - "注意 Z 类型的问题，可以通过 ... 方式预防"
 
-### 4. 技术要求
-与项目报告相同：
+### 5. 技术要求
 - 单文件 HTML，内联 CSS/JS
 - 无外部依赖
 - 响应式设计
 - 支持打印
 - 中文界面
+- **所有 commit 的详情数据**都要嵌入到 HTML 中
+- Review 列表项需要有悬停效果，明确表示可点击
+
+### 6. JavaScript 实现提示
+\`\`\`javascript
+// 参考实现结构
+function showCommitDetail(commitId) {
+  document.getElementById('main-view').style.display = 'none';
+  document.getElementById('detail-view-' + commitId).style.display = 'block';
+}
+
+function showMainView() {
+  // 隐藏所有详情视图
+  document.querySelectorAll('.commit-detail-view').forEach(el => el.style.display = 'none');
+  document.getElementById('main-view').style.display = 'block';
+}
+\`\`\`
 
 直接输出完整的 HTML 代码，不要包含 markdown 代码块标记，不要有任何解释文字。`;
 }

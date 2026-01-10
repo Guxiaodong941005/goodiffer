@@ -65,7 +65,8 @@ export async function reportCommand(options) {
       console.log();
       logger.success(`报告已保存到: ${outputPath}`);
 
-      if (options.open) {
+      // 自动在浏览器中打开报告
+      if (options.open !== false) {
         await open(outputPath);
       }
 
@@ -137,9 +138,9 @@ export async function reportCommand(options) {
         console.log(`  状态: 使用缓存 (无新数据)`);
       }
 
-      if (options.open) {
+      // 自动在浏览器中打开报告
+      if (options.open !== false) {
         console.log();
-        logger.info('正在打开报告...');
         await open(outputPath);
       }
     }

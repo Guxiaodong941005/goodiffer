@@ -187,8 +187,8 @@ export class ReportGenerator {
       until: dateRange.until
     });
 
-    // 获取最近的 reviews
-    const recentReviews = this.db.queryReviews({ ...filters, limit: 20 });
+    // 获取最近的 reviews (包含详细数据)
+    const recentReviews = this.db.getReviewsWithDetails({ ...filters, limit: 20 });
 
     // 处理开发者统计
     const developerStats = developerStatsRaw.map(dev => {
@@ -240,13 +240,40 @@ export class ReportGenerator {
       })),
       developerStats,
       recentReviews: recentReviews.map(r => ({
+        id: r.id,
         commitSha: r.commit_sha,
         commitMessage: r.commit_message,
         commitDate: dayjs(r.commit_date).format('YYYY-MM-DD HH:mm'),
         developerName: r.developer_name,
+        developerEmail: r.developer_email,
         summary: r.summary,
         errorCount: r.error_count,
-        warningCount: r.warning_count
+        warningCount: r.warning_count,
+        infoCount: r.info_count,
+        riskCount: r.risk_count,
+        insertions: r.insertions,
+        deletions: r.deletions,
+        filesChanged: r.files_changed,
+        branch: r.branch,
+        aiResponse: r.ai_response,
+        issues: (r.issues || []).map(issue => ({
+          level: issue.level,
+          type: issue.type,
+          file: issue.file,
+          line: issue.line,
+          code: issue.code,
+          description: issue.description,
+          suggestion: issue.suggestion,
+          title: issue.title,
+          body: issue.body,
+          priority: issue.priority
+        })),
+        associationRisks: (r.associationRisks || []).map(risk => ({
+          changedFile: risk.changed_file,
+          relatedFiles: risk.related_files,
+          risk: risk.risk,
+          checkPrompt: risk.check_prompt
+        }))
       }))
     };
   }
@@ -266,8 +293,8 @@ export class ReportGenerator {
       until: dateRange.until
     });
 
-    // 获取 reviews
-    const reviews = this.db.queryReviews(filters);
+    // 获取 reviews (包含详细数据)
+    const reviews = this.db.getReviewsWithDetails(filters);
 
     // 获取问题分布
     const issueDistribution = this.db.getIssueTypeDistribution({
@@ -339,6 +366,7 @@ export class ReportGenerator {
       })),
       topRisks: topRisks.slice(0, 5),
       reviews: reviews.map(r => ({
+        id: r.id,
         projectName: r.project_name,
         commitSha: r.commit_sha,
         commitMessage: r.commit_message,
@@ -346,7 +374,31 @@ export class ReportGenerator {
         summary: r.summary,
         errorCount: r.error_count,
         warningCount: r.warning_count,
-        infoCount: r.info_count
+        infoCount: r.info_count,
+        riskCount: r.risk_count,
+        insertions: r.insertions,
+        deletions: r.deletions,
+        filesChanged: r.files_changed,
+        branch: r.branch,
+        aiResponse: r.ai_response,
+        issues: (r.issues || []).map(issue => ({
+          level: issue.level,
+          type: issue.type,
+          file: issue.file,
+          line: issue.line,
+          code: issue.code,
+          description: issue.description,
+          suggestion: issue.suggestion,
+          title: issue.title,
+          body: issue.body,
+          priority: issue.priority
+        })),
+        associationRisks: (r.associationRisks || []).map(risk => ({
+          changedFile: risk.changed_file,
+          relatedFiles: risk.related_files,
+          risk: risk.risk,
+          checkPrompt: risk.check_prompt
+        }))
       }))
     };
   }
@@ -372,8 +424,76 @@ export class ReportGenerator {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    fs.writeFileSync(outputPath, html, 'utf-8');
+    // 注入导航 JavaScript (如果缺失)
+    const processedHtml = this.injectNavigationScript(html);
+
+    fs.writeFileSync(outputPath, processedHtml, 'utf-8');
     return outputPath;
+  }
+
+  // 注入导航脚本确保详情页跳转功能正常
+  injectNavigationScript(html) {
+    // 检查是否已有 showDetail 函数定义
+    if (html.includes('function showDetail') || html.includes('function showCommitDetail')) {
+      return html;
+    }
+
+    // 导航脚本
+    const navigationScript = `
+<script>
+function showDetail(id) {
+  // 隐藏主视图
+  var mainView = document.getElementById('main-view');
+  if (mainView) mainView.style.display = 'none';
+
+  // 隐藏所有详情视图
+  var detailViews = document.querySelectorAll('.detail-view, [id^="detail-"]');
+  detailViews.forEach(function(el) {
+    el.style.display = 'none';
+  });
+
+  // 显示目标详情视图
+  var targetView = document.getElementById('detail-' + id);
+  if (targetView) {
+    targetView.style.display = 'block';
+    window.scrollTo(0, 0);
+  }
+}
+
+function showCommitDetail(id) {
+  showDetail(id);
+}
+
+function showMain() {
+  // 隐藏所有详情视图
+  var detailViews = document.querySelectorAll('.detail-view, [id^="detail-"]');
+  detailViews.forEach(function(el) {
+    el.style.display = 'none';
+  });
+
+  // 显示主视图
+  var mainView = document.getElementById('main-view');
+  if (mainView) {
+    mainView.style.display = 'block';
+    window.scrollTo(0, 0);
+  }
+}
+
+function showMainView() {
+  showMain();
+}
+</script>
+`;
+
+    // 在 </body> 或 </html> 之前插入脚本
+    if (html.includes('</body>')) {
+      return html.replace('</body>', navigationScript + '</body>');
+    } else if (html.includes('</html>')) {
+      return html.replace('</html>', navigationScript + '</html>');
+    } else {
+      // 如果都没有，追加到末尾
+      return html + navigationScript;
+    }
   }
 }
 
